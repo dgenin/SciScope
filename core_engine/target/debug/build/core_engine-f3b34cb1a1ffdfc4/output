@@ -1,0 +1,9 @@
+cargo:rerun-if-changed=/workspace/core_engine/ui/appwindow.slint
+cargo:rerun-if-env-changed=SLINT_STYLE
+cargo:rerun-if-env-changed=SLINT_FONT_SIZES
+cargo:rerun-if-env-changed=SLINT_SCALE_FACTOR
+cargo:rerun-if-env-changed=SLINT_ASSET_SECTION
+cargo:rerun-if-env-changed=SLINT_EMBED_RESOURCES
+cargo:rerun-if-env-changed=SLINT_EMIT_DEBUG_INFO
+cargo:rerun-if-env-changed=SLINT_LIVE_PREVIEW
+cargo:rustc-env=SLINT_INCLUDE_GENERATED=/workspace/core_engine/target/debug/build/core_engine-f3b34cb1a1ffdfc4/out/appwindow.rs

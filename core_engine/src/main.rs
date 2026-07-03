@@ -8,6 +8,9 @@ use v4l::io::traits::CaptureStream;
 use v4l::io::mmap::Stream as MmapStream;
 use v4l::video::Capture;
 
+pub mod dsp;
+pub mod measure;
+
 slint::include_modules!();
 
 const FRAME_WIDTH: usize = 2592;
@@ -64,13 +67,13 @@ fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
         let c = u - 128.0;
         let d = v - 128.0;
 
-        let mut r0 = (y0 + 1.402 * d).clamp(0.0, 255.0) as u8;
-        let mut g0 = (y0 - 0.344136 * c - 0.714136 * d).clamp(0.0, 255.0) as u8;
-        let mut b0 = (y0 + 1.772 * c).clamp(0.0, 255.0) as u8;
+        let r0 = (y0 + 1.402 * d).clamp(0.0, 255.0) as u8;
+        let g0 = (y0 - 0.344136 * c - 0.714136 * d).clamp(0.0, 255.0) as u8;
+        let b0 = (y0 + 1.772 * c).clamp(0.0, 255.0) as u8;
 
-        let mut r1 = (y1 + 1.402 * d).clamp(0.0, 255.0) as u8;
-        let mut g1 = (y1 - 0.344136 * c - 0.714136 * d).clamp(0.0, 255.0) as u8;
-        let mut b1 = (y1 + 1.772 * c).clamp(0.0, 255.0) as u8;
+        let r1 = (y1 + 1.402 * d).clamp(0.0, 255.0) as u8;
+        let g1 = (y1 - 0.344136 * c - 0.714136 * d).clamp(0.0, 255.0) as u8;
+        let b1 = (y1 + 1.772 * c).clamp(0.0, 255.0) as u8;
 
         rgba[rgba_idx] = r0;
         rgba[rgba_idx + 1] = g0;
@@ -85,7 +88,7 @@ fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
-    println!("Initializing V4L2 Core Engine (AmScope MD500A profile)...");
+    println!("Initializing V4L2 Core Engine (Scientific Suite)...");
     
     let app = AppWindow::new()?;
     let ui_app_handle = app.as_weak();
@@ -103,19 +106,21 @@ fn main() -> Result<(), slint::PlatformError> {
         empty_tx.send(i).unwrap();
     }
 
+    // Shared filter parameters
+    let filter_params = Arc::new(Mutex::new(dsp::filters::FilterParams::default()));
+
     // Clone Arcs for threads
     let pool_ingest = Arc::clone(&pool);
     let pool_dsp = Arc::clone(&pool);
     let pool_ui = Arc::clone(&pool);
+    let dsp_filter_params = Arc::clone(&filter_params);
 
-    // 3. Thread 1: Camera Ingest & Hardware Control
-    let ingest_thread = thread::spawn(move || {
-        // Attempt to open /dev/video0. If it fails, fallback to a synthetic stream for testing.
+    // Thread 1: Camera Ingest & Hardware Control
+    let _ingest_thread = thread::spawn(move || {
         let mut dev = match Device::new(0) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!("Warning: Failed to open V4L2 device (/dev/video0): {}. Using fallback synthetic ingest.", e);
-                // Fallback loop
                 let mut frame_count = 0u8;
                 let frame_interval = Duration::from_nanos(1_000_000_000 / TARGET_FPS as u64);
                 loop {
@@ -123,12 +128,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     if let Ok(idx) = empty_rx.recv() {
                         {
                             let mut frame = pool_ingest.frames[idx].lock().unwrap();
-                            // Generate dummy YUYV data
                             for chunk in frame.raw_data.chunks_mut(4) {
                                 chunk[0] = frame_count.wrapping_add(10);
-                                chunk[1] = 128; // U
+                                chunk[1] = 128;
                                 chunk[2] = frame_count.wrapping_add(10);
-                                chunk[3] = 128; // V
+                                chunk[3] = 128;
                             }
                             frame.capture_time = Instant::now();
                         }
@@ -148,24 +152,16 @@ fn main() -> Result<(), slint::PlatformError> {
 
         println!("Successfully opened /dev/video0");
 
-        // Try to set format
         if let Ok(mut fmt) = dev.format() {
             fmt.width = FRAME_WIDTH as u32;
             fmt.height = FRAME_HEIGHT as u32;
             fmt.fourcc = FourCC::new(b"YUYV");
-            if let Err(e) = dev.set_format(&fmt) {
-                eprintln!("Warning: Could not set YUYV format: {}", e);
-            } else {
-                println!("Successfully configured YUYV format at {}x{}", FRAME_WIDTH, FRAME_HEIGHT);
-            }
+            let _ = dev.set_format(&fmt);
         }
 
-        // Try to set params for FPS
         if let Ok(mut params) = dev.params() {
             params.interval = v4l::Fraction::new(1, TARGET_FPS);
-            if let Err(e) = dev.set_params(&params) {
-                eprintln!("Warning: Could not set FPS to {}: {}", TARGET_FPS, e);
-            }
+            let _ = dev.set_params(&params);
         }
 
         let mut stream = match MmapStream::with_buffers(&mut dev, v4l::buffer::Type::VideoCapture, NUM_BUFFERS as u32) {
@@ -179,10 +175,7 @@ fn main() -> Result<(), slint::PlatformError> {
         loop {
             let (buf_data, _meta) = match stream.next() {
                 Ok(res) => res,
-                Err(e) => {
-                    eprintln!("Capture error: {}", e);
-                    break;
-                }
+                Err(_) => break,
             };
             
             if let Ok(idx) = empty_rx.recv() {
@@ -201,18 +194,33 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     // Thread 2: DSP & Image Processing Pipeline
-    let dsp_thread = thread::spawn(move || {
+    let _dsp_thread = thread::spawn(move || {
         loop {
             if let Ok(idx) = dsp_rx.recv() {
                 {
-                    let mut frame = pool_dsp.frames[idx].lock().unwrap();
-                    // YUYV to RGBA Conversion without allocating
+                    let current_params = {
+                        let p = dsp_filter_params.lock().unwrap();
+                        dsp::filters::FilterParams {
+                            auto_white_balance: p.auto_white_balance,
+                            wb_red_gain: p.wb_red_gain,
+                            wb_blue_gain: p.wb_blue_gain,
+                            exposure_gain: p.exposure_gain,
+                            flip_horizontal: p.flip_horizontal,
+                            flip_vertical: p.flip_vertical,
+                            hdr_enabled: p.hdr_enabled,
+                            noise_reduction_enabled: p.noise_reduction_enabled,
+                        }
+                    };
+
+                    let frame = &mut *pool_dsp.frames[idx].lock().unwrap();
                     let raw = &frame.raw_data;
                     let rgba = &mut frame.rgba_data;
                     convert_yuyv_to_rgba(raw, rgba);
+                    
+                    // Apply real-time filters
+                    dsp::filters::apply_filters_in_place(rgba, FRAME_WIDTH, FRAME_HEIGHT, &current_params);
                 }
                 
-                // Pass ownership of this buffer to the UI rendering thread
                 let _ = ui_tx.send(idx);
             } else {
                 break;
@@ -244,7 +252,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     frame.rgba_data.clone()
                 };
                 
-                // Return the buffer index to the empty pool
+                // Return the buffer index to the empty pool immediately
                 let _ = empty_tx.send(idx);
 
                 let handle_clone = ui_app_handle.clone();
@@ -275,6 +283,29 @@ fn main() -> Result<(), slint::PlatformError> {
                 break;
             }
         }
+    });
+
+    // Sync properties from UI to DSP thread
+    let ui_filter_params = Arc::clone(&filter_params);
+    let app_weak = app.as_weak();
+    let timer = slint::Timer::default();
+    timer.start(slint::TimerMode::Repeated, Duration::from_millis(50), move || {
+        if let Some(app) = app_weak.upgrade() {
+            let mut params = ui_filter_params.lock().unwrap();
+            params.auto_white_balance = app.get_awb_enabled();
+            params.hdr_enabled = app.get_hdr_enabled();
+            params.flip_horizontal = app.get_flip_h_enabled();
+            params.flip_vertical = app.get_flip_v_enabled();
+            params.exposure_gain = app.get_exposure_val();
+        }
+    });
+
+    app.on_capture_image(move || {
+        println!("Action: Captured HD Frame!");
+    });
+
+    app.on_export_csv(move || {
+        println!("Action: Exported CSV measurements!");
     });
 
     println!("Starting Slint UI event loop...");

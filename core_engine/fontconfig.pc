@@ -1,0 +1,5 @@
+Name: Fontconfig
+Description: Font configuration and customization library
+Version: 2.13.1
+Libs: -L/usr/lib -lfontconfig
+Cflags: -I/usr/include/fontconfig
