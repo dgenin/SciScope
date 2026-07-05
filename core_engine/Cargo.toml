@@ -6,3 +6,7 @@ edition = "2021"
 [dependencies]
 crossbeam-channel = "0.5"
 v4l = "0.14.0"
+slint = { version = "1.6", default-features = false, features = ["compat-1-0", "backend-winit", "renderer-software"] }
+
+[build-dependencies]
+slint-build = { version = "1.6", default-features = false }

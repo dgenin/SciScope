@@ -1,0 +1,6 @@
+.cargo/
+.rustup/
+.gemini/
+.local/
+.cache/
+core_engine/target/
