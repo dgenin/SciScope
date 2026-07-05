@@ -8,6 +8,8 @@ use v4l::io::traits::CaptureStream;
 use v4l::io::mmap::Stream as MmapStream;
 use v4l::video::Capture;
 
+slint::include_modules!();
+
 const FRAME_WIDTH: usize = 2592;
 const FRAME_HEIGHT: usize = 1944;
 const TARGET_FPS: u32 = 30;
@@ -82,9 +84,12 @@ fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
     }
 }
 
-fn main() {
+fn main() -> Result<(), slint::PlatformError> {
     println!("Initializing V4L2 Core Engine (AmScope MD500A profile)...");
     
+    let app = AppWindow::new()?;
+    let ui_app_handle = app.as_weak();
+
     // 1. Create the RingBufferPool with pre-allocated buffers.
     let pool = Arc::new(RingBufferPool::new(NUM_BUFFERS));
 
@@ -216,7 +221,7 @@ fn main() {
     });
 
     // Thread 3: UI & Rendering (Main/Receiver Thread)
-    let ui_thread = thread::spawn(move || {
+    let _ui_thread = thread::spawn(move || {
         let mut frames_processed = 0;
         let mut last_report = Instant::now();
         let mut max_latency = Duration::from_secs(0);
@@ -225,8 +230,6 @@ fn main() {
             if let Ok(idx) = ui_rx.recv() {
                 let latency = {
                     let frame = pool_ui.frames[idx].lock().unwrap();
-                    // Simulate uploading texture to GPU
-                    let _first_pixel_r = frame.rgba_data[0];
                     frame.capture_time.elapsed()
                 };
                 
@@ -236,8 +239,25 @@ fn main() {
                 
                 frames_processed += 1;
                 
+                let rgba_clone = {
+                    let frame = pool_ui.frames[idx].lock().unwrap();
+                    frame.rgba_data.clone()
+                };
+                
                 // Return the buffer index to the empty pool
                 let _ = empty_tx.send(idx);
+
+                let handle_clone = ui_app_handle.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(app) = handle_clone.upgrade() {
+                        let pixel_buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                            &rgba_clone,
+                            FRAME_WIDTH as u32,
+                            FRAME_HEIGHT as u32,
+                        );
+                        app.set_video_frame(slint::Image::from_rgba8(pixel_buffer));
+                    }
+                });
 
                 // Report metrics every second
                 if last_report.elapsed() >= Duration::from_secs(1) {
@@ -257,7 +277,6 @@ fn main() {
         }
     });
 
-    // Run for 5 seconds to demonstrate the metrics
-    thread::sleep(Duration::from_secs(5));
-    println!("Test complete. Exiting.");
+    println!("Starting Slint UI event loop...");
+    app.run()
 }
