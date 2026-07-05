@@ -1,0 +1,13 @@
+/workspace/core_engine/target/debug/deps/parlance-634744be02e789cf.d: /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/lib.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/bidi.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/font.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/font_family.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/generic_family.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/language.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/script.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/tag.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/text.rs
+
+/workspace/core_engine/target/debug/deps/libparlance-634744be02e789cf.rmeta: /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/lib.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/bidi.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/font.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/font_family.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/generic_family.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/language.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/script.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/tag.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/text.rs
+
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/lib.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/bidi.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/font.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/font_family.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/generic_family.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/language.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/script.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/tag.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/parlance-0.1.0/src/text.rs:

@@ -1,17 +1,127 @@
+import { Button, CheckBox, Slider, GroupBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
 export component AppWindow inherits Window {
-    title: "Real-Time Microscopy";
+    title: "Real-Time Microscopy - Scientific Suite";
     width: 1280px;
     height: 720px;
-    background: black;
+    background: #1e1e1e;
 
     in property <image> video-frame;
+    
+    // Control properties
+    in-out property <bool> awb-enabled: false;
+    in-out property <bool> hdr-enabled: false;
+    in-out property <bool> grid-enabled: false;
+    in-out property <bool> flip-h-enabled: false;
+    in-out property <bool> flip-v-enabled: false;
+    in-out property <float> exposure-val: 1.0;
+    
+    callback capture-image();
+    callback export-csv();
 
-    VerticalLayout {
-        Image {
-            source: video-frame;
-            width: 100%;
-            height: 100%;
-            image-fit: contain;
+    HorizontalLayout {
+        padding: 10px;
+        spacing: 10px;
+
+        // Sidebar for Controls
+        VerticalBox {
+            width: 250px;
+            alignment: start;
+
+            GroupBox {
+                title: "Live Optimizations";
+                VerticalBox {
+                    CheckBox {
+                        text: "Auto White Balance (AWB)";
+                        checked: awb-enabled;
+                        toggled => { awb-enabled = self.checked; }
+                    }
+                    CheckBox {
+                        text: "Live HDR (Local Contrast)";
+                        checked: hdr-enabled;
+                        toggled => { hdr-enabled = self.checked; }
+                    }
+                    HorizontalBox {
+                        Text { text: "Exposure: " + Math.round(exposure-val * 10.0) / 10.0; color: white; }
+                        Slider {
+                            minimum: 0.1;
+                            maximum: 3.0;
+                            value: exposure-val;
+                            changed(v) => { exposure-val = v; }
+                        }
+                    }
+                }
+            }
+
+            GroupBox {
+                title: "Alignment & Orientation";
+                VerticalBox {
+                    CheckBox {
+                        text: "Show Grid Overlay";
+                        checked: grid-enabled;
+                        toggled => { grid-enabled = self.checked; }
+                    }
+                    CheckBox {
+                        text: "Flip Horizontal";
+                        checked: flip-h-enabled;
+                        toggled => { flip-h-enabled = self.checked; }
+                    }
+                    CheckBox {
+                        text: "Flip Vertical";
+                        checked: flip-v-enabled;
+                        toggled => { flip-v-enabled = self.checked; }
+                    }
+                }
+            }
+
+            GroupBox {
+                title: "Scientific Tools";
+                VerticalBox {
+                    Button {
+                        text: "Capture HD Frame";
+                        clicked => { root.capture-image(); }
+                    }
+                    Button {
+                        text: "Export Measurements (CSV)";
+                        clicked => { root.export-csv(); }
+                    }
+                }
+            }
+        }
+
+        // Main Video Area
+        Rectangle {
+            background: black;
+            border-color: #333;
+            border-width: 2px;
+            
+            Image {
+                source: video-frame;
+                width: 100%;
+                height: 100%;
+                image-fit: contain;
+            }
+
+            // Optional Grid Overlay
+            if (grid-enabled) : Rectangle {
+                width: 100%;
+                height: 100%;
+                border-color: #00ff0055;
+                border-width: 1px;
+                // Simple crosshair approximation
+                Rectangle {
+                    width: 1px;
+                    height: 100%;
+                    x: parent.width / 2;
+                    background: #00ff0055;
+                }
+                Rectangle {
+                    width: 100%;
+                    height: 1px;
+                    y: parent.height / 2;
+                    background: #00ff0055;
+                }
+            }
         }
     }
 }

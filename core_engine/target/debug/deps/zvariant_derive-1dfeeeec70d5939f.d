@@ -1,0 +1,11 @@
+/workspace/core_engine/target/debug/deps/zvariant_derive-1dfeeeec70d5939f.d: /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/lib.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/dict.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/signature.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/type.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/utils.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/value.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/../README.md
+
+/workspace/core_engine/target/debug/deps/libzvariant_derive-1dfeeeec70d5939f.so: /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/lib.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/dict.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/signature.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/type.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/utils.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/value.rs /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/../README.md
+
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/lib.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/dict.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/signature.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/type.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/utils.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/value.rs:
+/workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zvariant_derive-5.12.0/src/../README.md:
