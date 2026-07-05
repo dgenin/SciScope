@@ -58,7 +58,7 @@ fn main() {
     let pool_ui = Arc::clone(&pool);
 
     // 3. Thread 1: Camera Ingest & Hardware Control (SyntheticCamera)
-    let ingest_thread = thread::spawn(move || {
+    let _ingest_thread = thread::spawn(move || {
         let mut frame_count = 0u8;
         loop {
             let start = Instant::now();
@@ -92,61 +92,53 @@ fn main() {
     });
 
     // Thread 2: DSP & Image Processing Pipeline
-    let dsp_thread = thread::spawn(move || {
-        loop {
-            if let Ok(idx) = dsp_rx.recv() {
-                {
-                    let mut frame = pool_dsp.frames[idx].lock().unwrap();
-                    // Simulate DSP workload (dummy op)
-                    frame.data[0] = 255 - frame.data[0];
-                    frame.data[1] = 255 - frame.data[1];
-                    frame.data[2] = 255 - frame.data[2];
-                }
-                
-                // Pass ownership of this buffer to the UI rendering thread
-                let _ = ui_tx.send(idx);
-            } else {
-                break;
+    let _dsp_thread = thread::spawn(move || {
+        while let Ok(idx) = dsp_rx.recv() {
+            {
+                let mut frame = pool_dsp.frames[idx].lock().unwrap();
+                // Simulate DSP workload (dummy op)
+                frame.data[0] = 255 - frame.data[0];
+                frame.data[1] = 255 - frame.data[1];
+                frame.data[2] = 255 - frame.data[2];
             }
+            
+            // Pass ownership of this buffer to the UI rendering thread
+            let _ = ui_tx.send(idx);
         }
     });
 
     // Thread 3: UI & Rendering (Main/Receiver Thread)
-    let ui_thread = thread::spawn(move || {
+    let _ui_thread = thread::spawn(move || {
         let mut frames_processed = 0;
         let mut last_report = Instant::now();
         let mut max_latency = Duration::from_secs(0);
         
-        loop {
-            if let Ok(idx) = ui_rx.recv() {
-                let latency = {
-                    let frame = pool_ui.frames[idx].lock().unwrap();
-                    frame.capture_time.elapsed()
-                };
-                
-                if latency > max_latency {
-                    max_latency = latency;
-                }
-                
-                frames_processed += 1;
-                
-                // Return the buffer index to the empty pool
-                let _ = empty_tx.send(idx);
+        while let Ok(idx) = ui_rx.recv() {
+            let latency = {
+                let frame = pool_ui.frames[idx].lock().unwrap();
+                frame.capture_time.elapsed()
+            };
+            
+            if latency > max_latency {
+                max_latency = latency;
+            }
+            
+            frames_processed += 1;
+            
+            // Return the buffer index to the empty pool
+            let _ = empty_tx.send(idx);
 
-                // Report metrics every second
-                if last_report.elapsed() >= Duration::from_secs(1) {
-                    println!(
-                        "Throughput: {} FPS | Max Latency in last sec: {:.2} ms | Pipeline Target: <16ms",
-                        frames_processed,
-                        max_latency.as_secs_f64() * 1000.0
-                    );
-                    
-                    frames_processed = 0;
-                    max_latency = Duration::from_secs(0);
-                    last_report = Instant::now();
-                }
-            } else {
-                break;
+            // Report metrics every second
+            if last_report.elapsed() >= Duration::from_secs(1) {
+                println!(
+                    "Throughput: {} FPS | Max Latency in last sec: {:.2} ms | Pipeline Target: <16ms",
+                    frames_processed,
+                    max_latency.as_secs_f64() * 1000.0
+                );
+                
+                frames_processed = 0;
+                max_latency = Duration::from_secs(0);
+                last_report = Instant::now();
             }
         }
     });
