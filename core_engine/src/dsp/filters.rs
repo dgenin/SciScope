@@ -84,3 +84,48 @@ pub fn apply_filters_in_place(rgba: &mut [u8], width: usize, height: usize, para
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_exposure_gain() {
+        let mut rgba = [100, 100, 100, 255];
+        let mut params = FilterParams::default();
+        params.exposure_gain = 2.0;
+
+        apply_filters_in_place(&mut rgba, 1, 1, &params);
+        assert_eq!(rgba, [200, 200, 200, 255]);
+    }
+
+    #[test]
+    fn test_exposure_clamping() {
+        let mut rgba = [200, 200, 200, 255];
+        let mut params = FilterParams::default();
+        params.exposure_gain = 2.0;
+
+        apply_filters_in_place(&mut rgba, 1, 1, &params);
+        assert_eq!(rgba, [255, 255, 255, 255]); // Clamped
+    }
+
+    #[test]
+    fn test_flip_horizontal() {
+        // 2x1 image
+        let mut rgba = [
+            10, 20, 30, 255, // Pixel 0 (left)
+            90, 80, 70, 255, // Pixel 1 (right)
+        ];
+        let mut params = FilterParams::default();
+        params.flip_horizontal = true;
+
+        apply_filters_in_place(&mut rgba, 2, 1, &params);
+        assert_eq!(
+            rgba,
+            [
+                90, 80, 70, 255, // Pixel 1 now on the left
+                10, 20, 30, 255, // Pixel 0 now on the right
+            ]
+        );
+    }
+}
