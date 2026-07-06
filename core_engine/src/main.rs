@@ -59,21 +59,27 @@ fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
     raw.par_chunks_exact(4)
         .zip(rgba.par_chunks_exact_mut(8))
         .for_each(|(raw_chunk, rgba_chunk)| {
-            let y0 = raw_chunk[0] as f32;
-            let u  = raw_chunk[1] as f32;
-            let y1 = raw_chunk[2] as f32;
-            let v  = raw_chunk[3] as f32;
+            let y0 = raw_chunk[0] as i32;
+            let u  = raw_chunk[1] as i32;
+            let y1 = raw_chunk[2] as i32;
+            let v  = raw_chunk[3] as i32;
 
-            let c = u - 128.0;
-            let d = v - 128.0;
+            let c = u - 128;
+            let d = v - 128;
 
-            let r0 = (y0 + 1.402 * d).clamp(0.0, 255.0) as u8;
-            let g0 = (y0 - 0.344136 * c - 0.714136 * d).clamp(0.0, 255.0) as u8;
-            let b0 = (y0 + 1.772 * c).clamp(0.0, 255.0) as u8;
+            let r_offset = 359 * d;
+            let g_offset = -88 * c - 183 * d;
+            let b_offset = 454 * c;
 
-            let r1 = (y1 + 1.402 * d).clamp(0.0, 255.0) as u8;
-            let g1 = (y1 - 0.344136 * c - 0.714136 * d).clamp(0.0, 255.0) as u8;
-            let b1 = (y1 + 1.772 * c).clamp(0.0, 255.0) as u8;
+            let y0_scaled = (y0 << 8) + 128;
+            let r0 = ((y0_scaled + r_offset) >> 8).clamp(0, 255) as u8;
+            let g0 = ((y0_scaled + g_offset) >> 8).clamp(0, 255) as u8;
+            let b0 = ((y0_scaled + b_offset) >> 8).clamp(0, 255) as u8;
+
+            let y1_scaled = (y1 << 8) + 128;
+            let r1 = ((y1_scaled + r_offset) >> 8).clamp(0, 255) as u8;
+            let g1 = ((y1_scaled + g_offset) >> 8).clamp(0, 255) as u8;
+            let b1 = ((y1_scaled + b_offset) >> 8).clamp(0, 255) as u8;
 
             rgba_chunk[0] = r0;
             rgba_chunk[1] = g0;
@@ -252,9 +258,13 @@ fn main() -> Result<(), slint::PlatformError> {
             
             frames_processed += 1;
             
-            let rgba_clone = {
+            let pixel_buffer = {
                 let frame = pool_ui.frames[idx].lock().unwrap();
-                frame.rgba_data.clone()
+                slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                    &frame.rgba_data,
+                    FRAME_WIDTH as u32,
+                    FRAME_HEIGHT as u32,
+                )
             };
             
             // Return the buffer index to the empty pool
@@ -263,11 +273,6 @@ fn main() -> Result<(), slint::PlatformError> {
             let handle_clone = ui_app_handle.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(app) = handle_clone.upgrade() {
-                    let pixel_buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-                        &rgba_clone,
-                        FRAME_WIDTH as u32,
-                        FRAME_HEIGHT as u32,
-                    );
                     app.set_video_frame(slint::Image::from_rgba8(pixel_buffer));
                 }
             });
