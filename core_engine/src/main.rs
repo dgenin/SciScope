@@ -20,12 +20,12 @@ const RAW_CHANNELS: usize = 2; // YUYV (2 bytes per pixel)
 const RGBA_CHANNELS: usize = 4; // RGBA
 const RAW_FRAME_SIZE: usize = FRAME_WIDTH * FRAME_HEIGHT * RAW_CHANNELS;
 const RGBA_FRAME_SIZE: usize = FRAME_WIDTH * FRAME_HEIGHT * RGBA_CHANNELS;
-const NUM_BUFFERS: usize = 4;
+const NUM_BUFFERS: usize = 8;
 
 /// A single frame buffer with its capture timestamp.
 struct Frame {
     raw_data: Vec<u8>,
-    rgba_data: Vec<u8>,
+    rgba_buffer: slint::SharedPixelBuffer<slint::Rgba8Pixel>,
     capture_time: Instant,
 }
 
@@ -40,7 +40,7 @@ impl RingBufferPool {
         for _ in 0..size {
             frames.push(Mutex::new(Frame {
                 raw_data: vec![0; RAW_FRAME_SIZE],
-                rgba_data: vec![0; RGBA_FRAME_SIZE],
+                rgba_buffer: slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(FRAME_WIDTH as u32, FRAME_HEIGHT as u32),
                 capture_time: Instant::now(),
             }));
         }
@@ -246,12 +246,19 @@ fn main() -> Result<(), slint::PlatformError> {
                 let frame = &mut *frame_guard;
                 // YUYV to RGBA Conversion without allocating
                 let raw = &frame.raw_data;
-                let rgba = &mut frame.rgba_data;
-                convert_yuyv_to_rgba(raw, rgba);
+                
+                // Obtain a mutable reference to the SharedPixelBuffer's backing array
+                // If Slint is done rendering this frame (which is highly likely with 8 buffers), this takes 0ms.
+                let rgba_slice = unsafe {
+                    let pixels = frame.rgba_buffer.make_mut_slice();
+                    std::slice::from_raw_parts_mut(pixels.as_mut_ptr() as *mut u8, RGBA_FRAME_SIZE)
+                };
+                
+                convert_yuyv_to_rgba(raw, rgba_slice);
                 
                 let filters_start = Instant::now();
                 // Apply real-time filters
-                dsp::filters::apply_filters_in_place(rgba, FRAME_WIDTH, FRAME_HEIGHT, &current_params);
+                dsp::filters::apply_filters_in_place(rgba_slice, FRAME_WIDTH, FRAME_HEIGHT, &current_params);
                 let filters_elapsed = filters_start.elapsed();
                 if filters_elapsed > Duration::from_millis(10) {
                     println!("[Profiler] DSP apply_filters_in_place took {:?}", filters_elapsed);
@@ -284,15 +291,12 @@ fn main() -> Result<(), slint::PlatformError> {
             let ui_copy_start = Instant::now();
             let pixel_buffer = {
                 let frame = pool_ui.frames[idx].lock().unwrap();
-                slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-                    &frame.rgba_data,
-                    FRAME_WIDTH as u32,
-                    FRAME_HEIGHT as u32,
-                )
+                // O(1) atomic ref-count clone instead of a 20MB copy
+                frame.rgba_buffer.clone()
             };
             let ui_copy_elapsed = ui_copy_start.elapsed();
             if ui_copy_elapsed > Duration::from_millis(10) {
-                println!("[Profiler] UI clone_from_slice took {:?}", ui_copy_elapsed);
+                println!("[Profiler] UI zero-copy clone took {:?}", ui_copy_elapsed);
             }
             
             // Return the buffer index to the empty pool
