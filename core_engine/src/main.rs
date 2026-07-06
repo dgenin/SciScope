@@ -56,41 +56,52 @@ fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
         return;
     }
 
-    raw.par_chunks_exact(4)
-        .zip(rgba.par_chunks_exact_mut(8))
-        .for_each(|(raw_chunk, rgba_chunk)| {
-            let y0 = raw_chunk[0] as i32;
-            let u  = raw_chunk[1] as i32;
-            let y1 = raw_chunk[2] as i32;
-            let v  = raw_chunk[3] as i32;
+    // Profile the conversion
+    let start_time = Instant::now();
 
-            let c = u - 128;
-            let d = v - 128;
+    // Parallelize by row instead of by 4-byte chunk to drastically reduce Rayon scheduling overhead
+    raw.par_chunks_exact(FRAME_WIDTH * RAW_CHANNELS)
+        .zip(rgba.par_chunks_exact_mut(FRAME_WIDTH * RGBA_CHANNELS))
+        .for_each(|(raw_row, rgba_row)| {
+            for (raw_chunk, rgba_chunk) in raw_row.chunks_exact(4).zip(rgba_row.chunks_exact_mut(8)) {
+                let y0 = raw_chunk[0] as i32;
+                let u  = raw_chunk[1] as i32;
+                let y1 = raw_chunk[2] as i32;
+                let v  = raw_chunk[3] as i32;
 
-            let r_offset = 359 * d;
-            let g_offset = -88 * c - 183 * d;
-            let b_offset = 454 * c;
+                let c = u.wrapping_sub(128);
+                let d = v.wrapping_sub(128);
 
-            let y0_scaled = (y0 << 8) + 128;
-            let r0 = ((y0_scaled + r_offset) >> 8).clamp(0, 255) as u8;
-            let g0 = ((y0_scaled + g_offset) >> 8).clamp(0, 255) as u8;
-            let b0 = ((y0_scaled + b_offset) >> 8).clamp(0, 255) as u8;
+                let r_offset = 359i32.wrapping_mul(d);
+                let g_offset = (-88i32).wrapping_mul(c).wrapping_sub(183i32.wrapping_mul(d));
+                let b_offset = 454i32.wrapping_mul(c);
 
-            let y1_scaled = (y1 << 8) + 128;
-            let r1 = ((y1_scaled + r_offset) >> 8).clamp(0, 255) as u8;
-            let g1 = ((y1_scaled + g_offset) >> 8).clamp(0, 255) as u8;
-            let b1 = ((y1_scaled + b_offset) >> 8).clamp(0, 255) as u8;
+                let y0_scaled = (y0 << 8).wrapping_add(128);
+                let r0 = ((y0_scaled.wrapping_add(r_offset)) >> 8).clamp(0, 255) as u8;
+                let g0 = ((y0_scaled.wrapping_add(g_offset)) >> 8).clamp(0, 255) as u8;
+                let b0 = ((y0_scaled.wrapping_add(b_offset)) >> 8).clamp(0, 255) as u8;
 
-            rgba_chunk[0] = r0;
-            rgba_chunk[1] = g0;
-            rgba_chunk[2] = b0;
-            rgba_chunk[3] = 255;
+                let y1_scaled = (y1 << 8).wrapping_add(128);
+                let r1 = ((y1_scaled.wrapping_add(r_offset)) >> 8).clamp(0, 255) as u8;
+                let g1 = ((y1_scaled.wrapping_add(g_offset)) >> 8).clamp(0, 255) as u8;
+                let b1 = ((y1_scaled.wrapping_add(b_offset)) >> 8).clamp(0, 255) as u8;
 
-            rgba_chunk[4] = r1;
-            rgba_chunk[5] = g1;
-            rgba_chunk[6] = b1;
-            rgba_chunk[7] = 255;
+                rgba_chunk[0] = r0;
+                rgba_chunk[1] = g0;
+                rgba_chunk[2] = b0;
+                rgba_chunk[3] = 255;
+
+                rgba_chunk[4] = r1;
+                rgba_chunk[5] = g1;
+                rgba_chunk[6] = b1;
+                rgba_chunk[7] = 255;
+            }
         });
+
+    let elapsed = start_time.elapsed();
+    if elapsed > Duration::from_millis(10) {
+        println!("[Profiler] convert_yuyv_to_rgba took {:?}", elapsed);
+    }
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -135,15 +146,22 @@ fn main() -> Result<(), slint::PlatformError> {
                     let start = Instant::now();
                     {
                         let mut frame = pool_ingest.frames[idx].lock().unwrap();
-                        // Generate dummy YUYV data in parallel
+                        // Generate dummy YUYV data in parallel (by row)
                         use rayon::prelude::*;
                         let y_val = frame_count.wrapping_add(10);
-                        frame.raw_data.par_chunks_exact_mut(4).for_each(|chunk| {
-                            chunk[0] = y_val;
-                            chunk[1] = 128; // U
-                            chunk[2] = y_val;
-                            chunk[3] = 128; // V
+                        let gen_start = Instant::now();
+                        frame.raw_data.par_chunks_exact_mut(FRAME_WIDTH * RAW_CHANNELS).for_each(|row| {
+                            for chunk in row.chunks_exact_mut(4) {
+                                chunk[0] = y_val;
+                                chunk[1] = 128; // U
+                                chunk[2] = y_val;
+                                chunk[3] = 128; // V
+                            }
                         });
+                        let gen_elapsed = gen_start.elapsed();
+                        if gen_elapsed > Duration::from_millis(10) {
+                            println!("[Profiler] Ingest fallback generation took {:?}", gen_elapsed);
+                        }
                         frame.capture_time = Instant::now();
                     }
                     let _ = dsp_tx.send(idx);
@@ -231,8 +249,13 @@ fn main() -> Result<(), slint::PlatformError> {
                 let rgba = &mut frame.rgba_data;
                 convert_yuyv_to_rgba(raw, rgba);
                 
+                let filters_start = Instant::now();
                 // Apply real-time filters
                 dsp::filters::apply_filters_in_place(rgba, FRAME_WIDTH, FRAME_HEIGHT, &current_params);
+                let filters_elapsed = filters_start.elapsed();
+                if filters_elapsed > Duration::from_millis(10) {
+                    println!("[Profiler] DSP apply_filters_in_place took {:?}", filters_elapsed);
+                }
             }
             
             // Pass ownership of this buffer to the UI rendering thread
@@ -258,6 +281,7 @@ fn main() -> Result<(), slint::PlatformError> {
             
             frames_processed += 1;
             
+            let ui_copy_start = Instant::now();
             let pixel_buffer = {
                 let frame = pool_ui.frames[idx].lock().unwrap();
                 slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
@@ -266,6 +290,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     FRAME_HEIGHT as u32,
                 )
             };
+            let ui_copy_elapsed = ui_copy_start.elapsed();
+            if ui_copy_elapsed > Duration::from_millis(10) {
+                println!("[Profiler] UI clone_from_slice took {:?}", ui_copy_elapsed);
+            }
             
             // Return the buffer index to the empty pool
             let _ = empty_tx.send(idx);
