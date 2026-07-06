@@ -50,41 +50,41 @@ impl RingBufferPool {
 
 // Basic YUYV to RGBA conversion
 fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
+    use rayon::prelude::*;
     let num_pixels = FRAME_WIDTH * FRAME_HEIGHT;
     if raw.len() < num_pixels * 2 || rgba.len() < num_pixels * 4 {
         return;
     }
 
-    for i in (0..num_pixels).step_by(2) {
-        let raw_idx = i * 2;
-        let rgba_idx = i * 4;
+    raw.par_chunks_exact(4)
+        .zip(rgba.par_chunks_exact_mut(8))
+        .for_each(|(raw_chunk, rgba_chunk)| {
+            let y0 = raw_chunk[0] as f32;
+            let u  = raw_chunk[1] as f32;
+            let y1 = raw_chunk[2] as f32;
+            let v  = raw_chunk[3] as f32;
 
-        let y0 = raw[raw_idx] as f32;
-        let u  = raw[raw_idx + 1] as f32;
-        let y1 = raw[raw_idx + 2] as f32;
-        let v  = raw[raw_idx + 3] as f32;
+            let c = u - 128.0;
+            let d = v - 128.0;
 
-        let c = u - 128.0;
-        let d = v - 128.0;
+            let r0 = (y0 + 1.402 * d).clamp(0.0, 255.0) as u8;
+            let g0 = (y0 - 0.344136 * c - 0.714136 * d).clamp(0.0, 255.0) as u8;
+            let b0 = (y0 + 1.772 * c).clamp(0.0, 255.0) as u8;
 
-        let r0 = (y0 + 1.402 * d).clamp(0.0, 255.0) as u8;
-        let g0 = (y0 - 0.344136 * c - 0.714136 * d).clamp(0.0, 255.0) as u8;
-        let b0 = (y0 + 1.772 * c).clamp(0.0, 255.0) as u8;
+            let r1 = (y1 + 1.402 * d).clamp(0.0, 255.0) as u8;
+            let g1 = (y1 - 0.344136 * c - 0.714136 * d).clamp(0.0, 255.0) as u8;
+            let b1 = (y1 + 1.772 * c).clamp(0.0, 255.0) as u8;
 
-        let r1 = (y1 + 1.402 * d).clamp(0.0, 255.0) as u8;
-        let g1 = (y1 - 0.344136 * c - 0.714136 * d).clamp(0.0, 255.0) as u8;
-        let b1 = (y1 + 1.772 * c).clamp(0.0, 255.0) as u8;
+            rgba_chunk[0] = r0;
+            rgba_chunk[1] = g0;
+            rgba_chunk[2] = b0;
+            rgba_chunk[3] = 255;
 
-        rgba[rgba_idx] = r0;
-        rgba[rgba_idx + 1] = g0;
-        rgba[rgba_idx + 2] = b0;
-        rgba[rgba_idx + 3] = 255;
-
-        rgba[rgba_idx + 4] = r1;
-        rgba[rgba_idx + 5] = g1;
-        rgba[rgba_idx + 6] = b1;
-        rgba[rgba_idx + 7] = 255;
-    }
+            rgba_chunk[4] = r1;
+            rgba_chunk[5] = g1;
+            rgba_chunk[6] = b1;
+            rgba_chunk[7] = 255;
+        });
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -129,13 +129,15 @@ fn main() -> Result<(), slint::PlatformError> {
                     let start = Instant::now();
                     {
                         let mut frame = pool_ingest.frames[idx].lock().unwrap();
-                        // Generate dummy YUYV data
-                        for chunk in frame.raw_data.chunks_mut(4) {
-                            chunk[0] = frame_count.wrapping_add(10);
+                        // Generate dummy YUYV data in parallel
+                        use rayon::prelude::*;
+                        let y_val = frame_count.wrapping_add(10);
+                        frame.raw_data.par_chunks_exact_mut(4).for_each(|chunk| {
+                            chunk[0] = y_val;
                             chunk[1] = 128; // U
-                            chunk[2] = frame_count.wrapping_add(10);
+                            chunk[2] = y_val;
                             chunk[3] = 128; // V
-                        }
+                        });
                         frame.capture_time = Instant::now();
                     }
                     let _ = dsp_tx.send(idx);
