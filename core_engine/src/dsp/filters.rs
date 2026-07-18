@@ -152,4 +152,46 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn test_hdr_contrast() {
+        // Create a synthetic gradient (test video stream row)
+        // Dark pixel (10), Mid pixel (100), Bright pixel (240)
+        let mut rgb = [
+            10, 10, 10,
+            100, 100, 100,
+            240, 240, 240,
+        ];
+        
+        let original_dark = rgb[0];
+        let original_mid = rgb[3];
+        let original_bright = rgb[6];
+        
+        let mut params = FilterParams::default();
+        params.hdr_enabled = true;
+
+        apply_filters_in_place(&mut rgb, 3, 1, &params);
+        
+        let hdr_dark = rgb[0];
+        let hdr_mid = rgb[3];
+        let hdr_bright = rgb[6];
+        
+        // Assert shadows are boosted significantly
+        assert!(hdr_dark > original_dark, "Dark regions should be boosted");
+        assert!(hdr_mid > original_mid, "Midtones should be boosted");
+        
+        // Assert highlights are relatively untouched (or slightly boosted/compressed)
+        assert!(hdr_bright >= original_bright, "Highlights should not be destroyed");
+        
+        // Measure global contrast
+        let original_contrast = original_bright as f32 / original_dark as f32;
+        let hdr_contrast = hdr_bright as f32 / hdr_dark as f32;
+        
+        // Since HDR is a gamma curve (x^0.8), it mathematically reduces global contrast ratio
+        // to fit high dynamic ranges into a displayable space.
+        assert!(hdr_contrast < original_contrast, "HDR compression mathematically reduces global contrast ratio");
+        
+        println!("Original -> Dark: {}, Mid: {}, Bright: {}, Contrast Ratio: {}", original_dark, original_mid, original_bright, original_contrast);
+        println!("HDR -> Dark: {}, Mid: {}, Bright: {}, Contrast Ratio: {}", hdr_dark, hdr_mid, hdr_bright, hdr_contrast);
+    }
 }

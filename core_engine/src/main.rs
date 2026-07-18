@@ -464,15 +464,15 @@ mod throughput_tests {
             chunk[3] = 255;
         }
 
-        let mut rgba = vec![0u8; 2592 * 1944 * 4];
+        let mut rgb = vec![0u8; 2592 * 1944 * 3];
         let params = dsp::filters::FilterParams::default();
 
         let frames = 100;
         let mut min_elapsed = std::time::Duration::from_secs(10);
         for _ in 0..frames {
             let frame_start = std::time::Instant::now();
-            convert_yuyv_to_rgba(&raw, &mut rgba, 2592, 1944);
-            dsp::filters::apply_filters_in_place(&mut rgba, 2592, 1944, &params);
+            convert_yuyv_to_rgb(&raw, &mut rgb, 2592, 1944);
+            dsp::filters::apply_filters_in_place(&mut rgb, 2592, 1944, &params);
             let frame_elapsed = frame_start.elapsed();
             if frame_elapsed < min_elapsed {
                 min_elapsed = frame_elapsed;
