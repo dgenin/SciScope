@@ -33,7 +33,14 @@ fn get_hdr_lut() -> &'static [f32; 256] {
     HDR_LUT.get_or_init(|| {
         let mut lut = [0.0; 256];
         for i in 1..256 {
-            lut[i] = (i as f32 / 255.0).powf(0.8) * 255.0 / (i as f32);
+            let x = i as f32 / 255.0;
+            // Piecewise quadratic S-Curve
+            let s_curve = if x < 0.5 {
+                2.0 * x * x
+            } else {
+                1.0 - 2.0 * (1.0 - x) * (1.0 - x)
+            };
+            lut[i] = s_curve * 255.0 / (i as f32);
         }
         lut[0] = 0.0;
         lut
@@ -176,20 +183,18 @@ mod tests {
         let hdr_mid = rgb[3];
         let hdr_bright = rgb[6];
         
-        // Assert shadows are boosted significantly
-        assert!(hdr_dark > original_dark, "Dark regions should be boosted");
-        assert!(hdr_mid > original_mid, "Midtones should be boosted");
+        // Assert shadows are deepened
+        assert!(hdr_dark < original_dark, "Dark regions should be deepened");
         
-        // Assert highlights are relatively untouched (or slightly boosted/compressed)
-        assert!(hdr_bright >= original_bright, "Highlights should not be destroyed");
+        // Assert highlights are boosted
+        assert!(hdr_bright > original_bright, "Highlights should be boosted");
         
         // Measure global contrast
         let original_contrast = original_bright as f32 / original_dark as f32;
         let hdr_contrast = hdr_bright as f32 / hdr_dark as f32;
         
-        // Since HDR is a gamma curve (x^0.8), it mathematically reduces global contrast ratio
-        // to fit high dynamic ranges into a displayable space.
-        assert!(hdr_contrast < original_contrast, "HDR compression mathematically reduces global contrast ratio");
+        // Since HDR is now an S-curve, it mathematically INCREASES global contrast ratio
+        assert!(hdr_contrast > original_contrast, "S-Curve mathematically increases global contrast ratio");
         
         println!("Original -> Dark: {}, Mid: {}, Bright: {}, Contrast Ratio: {}", original_dark, original_mid, original_bright, original_contrast);
         println!("HDR -> Dark: {}, Mid: {}, Bright: {}, Contrast Ratio: {}", hdr_dark, hdr_mid, hdr_bright, hdr_contrast);
