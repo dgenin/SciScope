@@ -300,11 +300,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     frame.capture_time = Instant::now();
                 }
                 
-                // Backpressure handling: if DSP thread falls behind, drop oldest raw frame
-                if dsp_tx.is_full() {
-                    if let Ok(old_idx) = ingest_dsp_rx.try_recv() {
-                        let _ = ingest_empty_tx.send(old_idx);
-                    }
+                // Backpressure handling: completely drain the DSP queue so we only queue the absolute newest frame
+                while let Ok(old_idx) = ingest_dsp_rx.try_recv() {
+                    let _ = ingest_empty_tx.send(old_idx);
                 }
                 let _ = dsp_tx.send(idx);
             } else {
@@ -365,11 +363,9 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             
             // Pass ownership of this buffer to the UI rendering thread
-            // Backpressure handling: if UI rendering falls behind, drop oldest processed frame
-            if ui_tx.is_full() {
-                if let Ok(old_idx) = dsp_ui_rx.try_recv() {
-                    let _ = dsp_empty_tx.send(old_idx);
-                }
+            // Backpressure handling: completely drain the UI queue so we only render the absolute newest frame
+            while let Ok(old_idx) = dsp_ui_rx.try_recv() {
+                let _ = dsp_empty_tx.send(old_idx);
             }
             let _ = ui_tx.send(idx);
         }
