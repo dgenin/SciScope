@@ -17,16 +17,15 @@ const FRAME_WIDTH: usize = 2592;
 const FRAME_HEIGHT: usize = 1944;
 const TARGET_FPS: u32 = 30;
 const RAW_CHANNELS: usize = 2; // YUYV (2 bytes per pixel)
-const RGBA_CHANNELS: usize = 4; // RGBA
-const RAW_FRAME_SIZE: usize = FRAME_WIDTH * FRAME_HEIGHT * RAW_CHANNELS;
-const RGBA_FRAME_SIZE: usize = FRAME_WIDTH * FRAME_HEIGHT * RGBA_CHANNELS;
+const RGB_CHANNELS: usize = 3; // RGB
+const RGB_FRAME_SIZE: usize = FRAME_WIDTH * FRAME_HEIGHT * RGB_CHANNELS;
 const NUM_BUFFERS: usize = 8;
 
 /// A single frame buffer with its capture timestamp.
 struct Frame {
     raw_data: Vec<u8>,
     valid_len: usize,
-    rgba_buffer: slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+    rgb_buffer: slint::SharedPixelBuffer<slint::Rgb8Pixel>,
     capture_time: Instant,
 }
 
@@ -42,7 +41,7 @@ impl RingBufferPool {
             frames.push(Mutex::new(Frame {
                 raw_data: vec![0; width * height * 2],
                 valid_len: 0,
-                rgba_buffer: slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(width as u32, height as u32),
+                rgb_buffer: slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(width as u32, height as u32),
                 capture_time: Instant::now(),
             }));
         }
@@ -84,10 +83,10 @@ fn get_luts() -> &'static Luts {
 }
 
 // Basic YUYV to RGBA conversion
-fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8], width: usize, height: usize) {
+pub fn convert_yuyv_to_rgb(raw: &[u8], rgb: &mut [u8], width: usize, height: usize) {
     use rayon::prelude::*;
     let num_pixels = width * height;
-    if raw.len() < num_pixels * 2 || rgba.len() < num_pixels * 4 {
+    if raw.len() < num_pixels * 2 || rgb.len() < num_pixels * 3 {
         return;
     }
 
@@ -96,12 +95,12 @@ fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8], width: usize, height: usize
 
     let lines_per_chunk = 16;
     let raw_chunk_size = width * RAW_CHANNELS * lines_per_chunk;
-    let rgba_chunk_size = width * RGBA_CHANNELS * lines_per_chunk;
+    let rgb_chunk_size = width * RGB_CHANNELS * lines_per_chunk;
 
-    raw.par_chunks_exact(raw_chunk_size)
-        .zip(rgba.par_chunks_exact_mut(rgba_chunk_size))
-        .for_each(|(raw_band, rgba_band)| {
-            for (raw_chunk, rgba_chunk) in raw_band.chunks_exact(4).zip(rgba_band.chunks_exact_mut(8)) {
+    rgb.par_chunks_exact_mut(rgb_chunk_size)
+        .zip(raw.par_chunks_exact(raw_chunk_size))
+        .for_each(|(rgb_band, raw_band)| {
+            for (raw_chunk, rgb_chunk) in raw_band.chunks_exact(4).zip(rgb_band.chunks_exact_mut(6)) {
                 let y0 = raw_chunk[0] as usize;
                 let u  = raw_chunk[1] as usize;
                 let y1 = raw_chunk[2] as usize;
@@ -115,51 +114,50 @@ fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8], width: usize, height: usize
                 let g_offset = g_u + g_v;
 
                 let y0_scaled = luts.y[y0];
-                rgba_chunk[0] = ((y0_scaled + r_v) >> 8).clamp(0, 255) as u8;
-                rgba_chunk[1] = ((y0_scaled + g_offset) >> 8).clamp(0, 255) as u8;
-                rgba_chunk[2] = ((y0_scaled + b_u) >> 8).clamp(0, 255) as u8;
-                rgba_chunk[3] = 255;
+                rgb_chunk[0] = ((y0_scaled + r_v) >> 8).clamp(0, 255) as u8;
+                rgb_chunk[1] = ((y0_scaled + g_offset) >> 8).clamp(0, 255) as u8;
+                rgb_chunk[2] = ((y0_scaled + b_u) >> 8).clamp(0, 255) as u8;
 
                 let y1_scaled = luts.y[y1];
-                rgba_chunk[4] = ((y1_scaled + r_v) >> 8).clamp(0, 255) as u8;
-                rgba_chunk[5] = ((y1_scaled + g_offset) >> 8).clamp(0, 255) as u8;
-                rgba_chunk[6] = ((y1_scaled + b_u) >> 8).clamp(0, 255) as u8;
-                rgba_chunk[7] = 255;
+                rgb_chunk[3] = ((y1_scaled + r_v) >> 8).clamp(0, 255) as u8;
+                rgb_chunk[4] = ((y1_scaled + g_offset) >> 8).clamp(0, 255) as u8;
+                rgb_chunk[5] = ((y1_scaled + b_u) >> 8).clamp(0, 255) as u8;
             }
         });
 
     // Handle the remaining lines (1944 % 16 = 8 lines)
     let remainder_raw = raw.chunks_exact(raw_chunk_size).remainder();
-    let remainder_rgba = rgba.chunks_exact_mut(rgba_chunk_size).into_remainder();
+    let remainder_rgb = rgb.chunks_exact_mut(rgb_chunk_size).into_remainder();
     
     if !remainder_raw.is_empty() {
-        for (raw_chunk, rgba_chunk) in remainder_raw.chunks_exact(4).zip(remainder_rgba.chunks_exact_mut(8)) {
+        for (raw_chunk, rgb_chunk) in remainder_raw.chunks_exact(4).zip(remainder_rgb.chunks_exact_mut(6)) {
             let y0 = raw_chunk[0] as usize;
             let u  = raw_chunk[1] as usize;
             let y1 = raw_chunk[2] as usize;
             let v  = raw_chunk[3] as usize;
 
             let r_v = luts.r_v[v];
-            let g_offset = luts.g_u[u] + luts.g_v[v];
+            let g_u = luts.g_u[u];
+            let g_v = luts.g_v[v];
             let b_u = luts.b_u[u];
 
+            let g_offset = g_u + g_v;
+
             let y0_scaled = luts.y[y0];
-            rgba_chunk[0] = ((y0_scaled + r_v) >> 8).clamp(0, 255) as u8;
-            rgba_chunk[1] = ((y0_scaled + g_offset) >> 8).clamp(0, 255) as u8;
-            rgba_chunk[2] = ((y0_scaled + b_u) >> 8).clamp(0, 255) as u8;
-            rgba_chunk[3] = 255;
+            rgb_chunk[0] = ((y0_scaled + r_v) >> 8).clamp(0, 255) as u8;
+            rgb_chunk[1] = ((y0_scaled + g_offset) >> 8).clamp(0, 255) as u8;
+            rgb_chunk[2] = ((y0_scaled + b_u) >> 8).clamp(0, 255) as u8;
 
             let y1_scaled = luts.y[y1];
-            rgba_chunk[4] = ((y1_scaled + r_v) >> 8).clamp(0, 255) as u8;
-            rgba_chunk[5] = ((y1_scaled + g_offset) >> 8).clamp(0, 255) as u8;
-            rgba_chunk[6] = ((y1_scaled + b_u) >> 8).clamp(0, 255) as u8;
-            rgba_chunk[7] = 255;
+            rgb_chunk[3] = ((y1_scaled + r_v) >> 8).clamp(0, 255) as u8;
+            rgb_chunk[4] = ((y1_scaled + g_offset) >> 8).clamp(0, 255) as u8;
+            rgb_chunk[5] = ((y1_scaled + b_u) >> 8).clamp(0, 255) as u8;
         }
     }
 
     let elapsed = start_time.elapsed();
     if elapsed > Duration::from_millis(10) {
-        println!("[Profiler] convert_yuyv_to_rgba took {:?}", elapsed);
+        println!("[Profiler] convert_yuyv_to_rgb took {:?}", elapsed);
     }
 }
 
@@ -315,7 +313,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let dsp_empty_tx = empty_tx.clone();
     let dsp_ui_rx = ui_rx.clone();
     let _dsp_thread = thread::spawn(move || {
-        let rgba_frame_size = cam_width * cam_height * RGBA_CHANNELS;
+        let rgb_frame_size = cam_width * cam_height * RGB_CHANNELS;
         while let Ok(idx) = dsp_rx.recv() {
             {
                 let current_params = {
@@ -338,24 +336,24 @@ fn main() -> Result<(), slint::PlatformError> {
                 let raw = &frame.raw_data[..raw_valid_len];
                 
                 // Obtain a mutable reference to the SharedPixelBuffer's backing array
-                let rgba_slice = unsafe {
-                    let pixels = frame.rgba_buffer.make_mut_slice();
-                    std::slice::from_raw_parts_mut(pixels.as_mut_ptr() as *mut u8, rgba_frame_size)
+                let rgb_slice = unsafe {
+                    let pixels = frame.rgb_buffer.make_mut_slice();
+                    std::slice::from_raw_parts_mut(pixels.as_mut_ptr() as *mut u8, rgb_frame_size)
                 };
                 
                 if is_mjpeg {
                     let cursor = std::io::Cursor::new(raw);
                     let options = zune_core::options::DecoderOptions::default()
-                        .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGBA);
+                        .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGB);
                     let mut decoder = zune_jpeg::JpegDecoder::new_with_options(cursor, options);
-                    let _ = decoder.decode_into(rgba_slice);
+                    let _ = decoder.decode_into(rgb_slice);
                 } else {
-                    convert_yuyv_to_rgba(raw, rgba_slice, cam_width, cam_height);
+                    convert_yuyv_to_rgb(raw, rgb_slice, cam_width, cam_height);
                 }
                 
                 let filters_start = Instant::now();
                 // Apply real-time filters
-                dsp::filters::apply_filters_in_place(rgba_slice, cam_width, cam_height, &current_params);
+                dsp::filters::apply_filters_in_place(rgb_slice, cam_width, cam_height, &current_params);
                 let filters_elapsed = filters_start.elapsed();
                 if filters_elapsed > Duration::from_millis(10) {
                     println!("[Profiler] DSP apply_filters_in_place took {:?}", filters_elapsed);
@@ -393,7 +391,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let pixel_buffer = {
                 let frame = pool_ui.frames[idx].lock().unwrap();
                 // O(1) atomic ref-count clone instead of a 20MB copy
-                frame.rgba_buffer.clone()
+                frame.rgb_buffer.clone()
             };
             let ui_copy_elapsed = ui_copy_start.elapsed();
             if ui_copy_elapsed > Duration::from_millis(10) {
@@ -406,7 +404,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let handle_clone = ui_app_handle.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(app) = handle_clone.upgrade() {
-                    app.set_video_frame(slint::Image::from_rgba8(pixel_buffer));
+                    app.set_video_frame(slint::Image::from_rgb8(pixel_buffer));
                 }
             });
 

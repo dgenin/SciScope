@@ -39,18 +39,18 @@ fn get_hdr_lut() -> &'static [f32; 256] {
         lut
     })
 }
-pub fn apply_filters_in_place(rgba: &mut [u8], width: usize, height: usize, params: &FilterParams) {
+pub fn apply_filters_in_place(rgb: &mut [u8], width: usize, height: usize, params: &FilterParams) {
     let needs_color_correction = (params.exposure_gain - 1.0).abs() > f32::EPSILON 
         || params.auto_white_balance 
         || params.hdr_enabled;
 
     if needs_color_correction {
-        let row_bytes = width * 4;
+        let row_bytes = width * 3;
         let hdr_lut = get_hdr_lut();
         
         // Process pixels in parallel by row to reduce Rayon scheduler overhead
-        rgba.par_chunks_exact_mut(row_bytes).for_each(|row| {
-            for pixel in row.chunks_exact_mut(4) {
+        rgb.par_chunks_exact_mut(row_bytes).for_each(|row| {
+            for pixel in row.chunks_exact_mut(3) {
                 let mut r = pixel[0] as f32;
                 let mut g = pixel[1] as f32;
                 let mut b = pixel[2] as f32;
@@ -86,8 +86,8 @@ pub fn apply_filters_in_place(rgba: &mut [u8], width: usize, height: usize, para
     
     // Basic Flip operations (Parallelized)
     if params.flip_vertical {
-        let row_bytes = width * 4;
-        let (top, bottom) = rgba.split_at_mut((height / 2) * row_bytes);
+        let row_bytes = width * 3;
+        let (top, bottom) = rgb.split_at_mut((height / 2) * row_bytes);
         top.par_chunks_exact_mut(row_bytes)
            .zip(bottom.par_chunks_exact_mut(row_bytes).rev())
            .for_each(|(top_row, bottom_row)| {
@@ -96,12 +96,12 @@ pub fn apply_filters_in_place(rgba: &mut [u8], width: usize, height: usize, para
     }
     
     if params.flip_horizontal {
-        let row_bytes = width * 4;
-        rgba.par_chunks_exact_mut(row_bytes).for_each(|row| {
+        let row_bytes = width * 3;
+        rgb.par_chunks_exact_mut(row_bytes).for_each(|row| {
             for x in 0..(width / 2) {
-                let p1 = x * 4;
-                let p2 = (width - 1 - x) * 4;
-                for c in 0..4 {
+                let p1 = x * 3;
+                let p2 = (width - 1 - x) * 3;
+                for c in 0..3 {
                     row.swap(p1 + c, p2 + c);
                 }
             }
@@ -115,40 +115,40 @@ mod tests {
 
     #[test]
     fn test_exposure_gain() {
-        let mut rgba = [100, 100, 100, 255];
+        let mut rgb = [100, 100, 100];
         let mut params = FilterParams::default();
         params.exposure_gain = 2.0;
 
-        apply_filters_in_place(&mut rgba, 1, 1, &params);
-        assert_eq!(rgba, [200, 200, 200, 255]);
+        apply_filters_in_place(&mut rgb, 1, 1, &params);
+        assert_eq!(rgb, [200, 200, 200]);
     }
 
     #[test]
     fn test_exposure_clamping() {
-        let mut rgba = [200, 200, 200, 255];
+        let mut rgb = [200, 200, 200];
         let mut params = FilterParams::default();
         params.exposure_gain = 2.0;
 
-        apply_filters_in_place(&mut rgba, 1, 1, &params);
-        assert_eq!(rgba, [255, 255, 255, 255]); // Clamped
+        apply_filters_in_place(&mut rgb, 1, 1, &params);
+        assert_eq!(rgb, [255, 255, 255]); // Clamped
     }
 
     #[test]
     fn test_flip_horizontal() {
         // 2x1 image
-        let mut rgba = [
-            10, 20, 30, 255, // Pixel 0 (left)
-            90, 80, 70, 255, // Pixel 1 (right)
+        let mut rgb = [
+            10, 20, 30, // Pixel 0 (left)
+            90, 80, 70, // Pixel 1 (right)
         ];
         let mut params = FilterParams::default();
         params.flip_horizontal = true;
 
-        apply_filters_in_place(&mut rgba, 2, 1, &params);
+        apply_filters_in_place(&mut rgb, 2, 1, &params);
         assert_eq!(
-            rgba,
+            rgb,
             [
-                90, 80, 70, 255, // Pixel 1 now on the left
-                10, 20, 30, 255, // Pixel 0 now on the right
+                90, 80, 70, // Pixel 1 now on the left
+                10, 20, 30, // Pixel 0 now on the right
             ]
         );
     }
