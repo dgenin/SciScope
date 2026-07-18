@@ -25,7 +25,20 @@ impl Default for FilterParams {
         }
     }
 }
+use std::sync::OnceLock;
 
+static HDR_LUT: OnceLock<[f32; 256]> = OnceLock::new();
+
+fn get_hdr_lut() -> &'static [f32; 256] {
+    HDR_LUT.get_or_init(|| {
+        let mut lut = [0.0; 256];
+        for i in 1..256 {
+            lut[i] = (i as f32 / 255.0).powf(0.8) * 255.0 / (i as f32);
+        }
+        lut[0] = 0.0;
+        lut
+    })
+}
 pub fn apply_filters_in_place(rgba: &mut [u8], width: usize, height: usize, params: &FilterParams) {
     let needs_color_correction = (params.exposure_gain - 1.0).abs() > f32::EPSILON 
         || params.auto_white_balance 
@@ -33,6 +46,8 @@ pub fn apply_filters_in_place(rgba: &mut [u8], width: usize, height: usize, para
 
     if needs_color_correction {
         let row_bytes = width * 4;
+        let hdr_lut = get_hdr_lut();
+        
         // Process pixels in parallel by row to reduce Rayon scheduler overhead
         rgba.par_chunks_exact_mut(row_bytes).for_each(|row| {
             for pixel in row.chunks_exact_mut(4) {
@@ -53,15 +68,13 @@ pub fn apply_filters_in_place(rgba: &mut [u8], width: usize, height: usize, para
                     b *= params.wb_blue_gain;
                 }
                 
-                // Simple local contrast / HDR approximation
+                // Extremely fast HDR approximation via precomputed LUT
                 if params.hdr_enabled {
-                    let lum = 0.299 * r + 0.587 * g + 0.114 * b;
-                    if lum > 0.0 {
-                        let factor = (lum / 255.0).powf(0.8) * 255.0 / lum;
-                        r *= factor;
-                        g *= factor;
-                        b *= factor;
-                    }
+                    let lum = (0.299 * r + 0.587 * g + 0.114 * b) as usize;
+                    let factor = hdr_lut[lum.clamp(0, 255)];
+                    r *= factor;
+                    g *= factor;
+                    b *= factor;
                 }
                 
                 pixel[0] = r.clamp(0.0, 255.0) as u8;

@@ -221,7 +221,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let pool_ui = Arc::clone(&pool);
     let dsp_filter_params = Arc::clone(&filter_params);
 
-    // 3. Thread 1: Camera Ingest & Hardware Control
+    // Thread 1: Ingestion Pipeline (Camera I/O)
+    let ingest_empty_tx = empty_tx.clone();
+    let ingest_dsp_rx = dsp_rx.clone();
     let _ingest_thread = thread::spawn(move || {
         let mut dev = match dev {
             Some(d) => d,
@@ -298,6 +300,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     frame.capture_time = Instant::now();
                 }
                 
+                // Backpressure handling: if DSP thread falls behind, drop oldest raw frame
+                if dsp_tx.is_full() {
+                    if let Ok(old_idx) = ingest_dsp_rx.try_recv() {
+                        let _ = ingest_empty_tx.send(old_idx);
+                    }
+                }
                 let _ = dsp_tx.send(idx);
             } else {
                 break; 
@@ -306,6 +314,8 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     // Thread 2: DSP & Image Processing Pipeline
+    let dsp_empty_tx = empty_tx.clone();
+    let dsp_ui_rx = ui_rx.clone();
     let _dsp_thread = thread::spawn(move || {
         let rgba_frame_size = cam_width * cam_height * RGBA_CHANNELS;
         while let Ok(idx) = dsp_rx.recv() {
@@ -355,6 +365,12 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             
             // Pass ownership of this buffer to the UI rendering thread
+            // Backpressure handling: if UI rendering falls behind, drop oldest processed frame
+            if ui_tx.is_full() {
+                if let Ok(old_idx) = dsp_ui_rx.try_recv() {
+                    let _ = dsp_empty_tx.send(old_idx);
+                }
+            }
             let _ = ui_tx.send(idx);
         }
     });
