@@ -336,12 +336,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 };
                 
                 if is_mjpeg {
-                    if let Ok(img) = image::load_from_memory_with_format(raw, image::ImageFormat::Jpeg) {
-                        let rgba_img = img.to_rgba8();
-                        if rgba_img.len() == rgba_slice.len() {
-                            rgba_slice.copy_from_slice(&rgba_img);
-                        }
-                    }
+                    let cursor = std::io::Cursor::new(raw);
+                    let options = zune_core::options::DecoderOptions::default()
+                        .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGBA);
+                    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(cursor, options);
+                    let _ = decoder.decode_into(rgba_slice);
                 } else {
                     convert_yuyv_to_rgba(raw, rgba_slice, cam_width, cam_height);
                 }
