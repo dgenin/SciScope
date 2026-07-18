@@ -35,12 +35,12 @@ struct RingBufferPool {
 }
 
 impl RingBufferPool {
-    fn new(size: usize) -> Self {
+    fn new(size: usize, width: usize, height: usize) -> Self {
         let mut frames = Vec::with_capacity(size);
         for _ in 0..size {
             frames.push(Mutex::new(Frame {
-                raw_data: vec![0; RAW_FRAME_SIZE],
-                rgba_buffer: slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(FRAME_WIDTH as u32, FRAME_HEIGHT as u32),
+                raw_data: vec![0; width * height * 2],
+                rgba_buffer: slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(width as u32, height as u32),
                 capture_time: Instant::now(),
             }));
         }
@@ -82,9 +82,9 @@ fn get_luts() -> &'static Luts {
 }
 
 // Basic YUYV to RGBA conversion
-fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
+fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8], width: usize, height: usize) {
     use rayon::prelude::*;
-    let num_pixels = FRAME_WIDTH * FRAME_HEIGHT;
+    let num_pixels = width * height;
     if raw.len() < num_pixels * 2 || rgba.len() < num_pixels * 4 {
         return;
     }
@@ -92,11 +92,9 @@ fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
     let start_time = Instant::now();
     let luts = get_luts();
 
-    // Rayon Chunking: 16 lines per chunk -> 121 tasks for 1944 lines.
-    // Balances scheduling overhead with CPU starvation prevention.
     let lines_per_chunk = 16;
-    let raw_chunk_size = FRAME_WIDTH * RAW_CHANNELS * lines_per_chunk;
-    let rgba_chunk_size = FRAME_WIDTH * RGBA_CHANNELS * lines_per_chunk;
+    let raw_chunk_size = width * RAW_CHANNELS * lines_per_chunk;
+    let rgba_chunk_size = width * RGBA_CHANNELS * lines_per_chunk;
 
     raw.par_chunks_exact(raw_chunk_size)
         .zip(rgba.par_chunks_exact_mut(rgba_chunk_size))
@@ -165,12 +163,38 @@ fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
 
 fn main() -> Result<(), slint::PlatformError> {
     println!("Initializing V4L2 Core Engine (Scientific Suite)...");
+
+    let mut dev = match Device::new(0) {
+        Ok(d) => Some(d),
+        Err(e) => {
+            eprintln!("Warning: Failed to open V4L2 device (/dev/video0): {}. Using fallback synthetic ingest.", e);
+            None
+        }
+    };
+
+    let mut cam_width = FRAME_WIDTH;
+    let mut cam_height = FRAME_HEIGHT;
+
+    if let Some(ref mut dev) = dev {
+        if let Ok(mut fmt) = dev.format() {
+            fmt.width = FRAME_WIDTH as u32;
+            fmt.height = FRAME_HEIGHT as u32;
+            fmt.fourcc = FourCC::new(b"YUYV");
+            let _ = dev.set_format(&fmt);
+            
+            if let Ok(actual_fmt) = dev.format() {
+                cam_width = actual_fmt.width as usize;
+                cam_height = actual_fmt.height as usize;
+                println!("Negotiated Format: {}x{} ({})", cam_width, cam_height, actual_fmt.fourcc);
+            }
+        }
+    }
     
     let app = AppWindow::new()?;
     let ui_app_handle = app.as_weak();
 
-    // 1. Create the RingBufferPool with pre-allocated buffers.
-    let pool = Arc::new(RingBufferPool::new(NUM_BUFFERS));
+    // 1. Create the RingBufferPool with pre-allocated buffers matching actual camera resolution.
+    let pool = Arc::new(RingBufferPool::new(NUM_BUFFERS, cam_width, cam_height));
 
     // 2. Set up channels for passing buffer indices.
     let (empty_tx, empty_rx): (Sender<usize>, Receiver<usize>) = bounded(NUM_BUFFERS);
@@ -193,11 +217,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // 3. Thread 1: Camera Ingest & Hardware Control
     let _ingest_thread = thread::spawn(move || {
-        // Attempt to open /dev/video0. If it fails, fallback to a synthetic stream for testing.
-        let mut dev = match Device::new(0) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Warning: Failed to open V4L2 device (/dev/video0): {}. Using fallback synthetic ingest.", e);
+        let mut dev = match dev {
+            Some(d) => d,
+            None => {
                 // Fallback loop
                 let mut frame_count = 0u8;
                 let frame_interval = Duration::from_nanos(1_000_000_000 / TARGET_FPS as u64);
@@ -209,7 +231,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         use rayon::prelude::*;
                         let y_val = frame_count.wrapping_add(10);
                         let gen_start = Instant::now();
-                        frame.raw_data.par_chunks_exact_mut(FRAME_WIDTH * RAW_CHANNELS).for_each(|row| {
+                        frame.raw_data.par_chunks_exact_mut(cam_width * RAW_CHANNELS).for_each(|row| {
                             for chunk in row.chunks_exact_mut(4) {
                                 chunk[0] = y_val;
                                 chunk[1] = 128; // U
@@ -236,14 +258,6 @@ fn main() -> Result<(), slint::PlatformError> {
         };
 
         println!("Successfully opened /dev/video0");
-
-        // Try to set format
-        if let Ok(mut fmt) = dev.format() {
-            fmt.width = FRAME_WIDTH as u32;
-            fmt.height = FRAME_HEIGHT as u32;
-            fmt.fourcc = FourCC::new(b"YUYV");
-            let _ = dev.set_format(&fmt);
-        }
 
         // Try to set params for FPS
         if let Ok(mut params) = dev.params() {
@@ -285,6 +299,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // Thread 2: DSP & Image Processing Pipeline
     let _dsp_thread = thread::spawn(move || {
+        let rgba_frame_size = cam_width * cam_height * RGBA_CHANNELS;
         while let Ok(idx) = dsp_rx.recv() {
             {
                 let current_params = {
@@ -307,17 +322,16 @@ fn main() -> Result<(), slint::PlatformError> {
                 let raw = &frame.raw_data;
                 
                 // Obtain a mutable reference to the SharedPixelBuffer's backing array
-                // If Slint is done rendering this frame (which is highly likely with 8 buffers), this takes 0ms.
                 let rgba_slice = unsafe {
                     let pixels = frame.rgba_buffer.make_mut_slice();
-                    std::slice::from_raw_parts_mut(pixels.as_mut_ptr() as *mut u8, RGBA_FRAME_SIZE)
+                    std::slice::from_raw_parts_mut(pixels.as_mut_ptr() as *mut u8, rgba_frame_size)
                 };
                 
-                convert_yuyv_to_rgba(raw, rgba_slice);
+                convert_yuyv_to_rgba(raw, rgba_slice, cam_width, cam_height);
                 
                 let filters_start = Instant::now();
                 // Apply real-time filters
-                dsp::filters::apply_filters_in_place(rgba_slice, FRAME_WIDTH, FRAME_HEIGHT, &current_params);
+                dsp::filters::apply_filters_in_place(rgba_slice, cam_width, cam_height, &current_params);
                 let filters_elapsed = filters_start.elapsed();
                 if filters_elapsed > Duration::from_millis(10) {
                     println!("[Profiler] DSP apply_filters_in_place took {:?}", filters_elapsed);
@@ -416,7 +430,14 @@ mod throughput_tests {
 
     #[test]
     fn test_throughput() {
-        let raw = vec![128u8; 2592 * 1944 * 2];
+        let mut raw = vec![0u8; 2592 * 1944 * 2];
+        for chunk in raw.chunks_exact_mut(4) {
+            chunk[0] = 76;
+            chunk[1] = 84;
+            chunk[2] = 76;
+            chunk[3] = 255;
+        }
+
         let mut rgba = vec![0u8; 2592 * 1944 * 4];
         let params = dsp::filters::FilterParams::default();
 
@@ -424,7 +445,7 @@ mod throughput_tests {
         let mut min_elapsed = std::time::Duration::from_secs(10);
         for _ in 0..frames {
             let frame_start = std::time::Instant::now();
-            convert_yuyv_to_rgba(&raw, &mut rgba);
+            convert_yuyv_to_rgba(&raw, &mut rgba, 2592, 1944);
             dsp::filters::apply_filters_in_place(&mut rgba, 2592, 1944, &params);
             let frame_elapsed = frame_start.elapsed();
             if frame_elapsed < min_elapsed {
