@@ -48,6 +48,39 @@ impl RingBufferPool {
     }
 }
 
+use std::sync::OnceLock;
+
+struct Luts {
+    y: [i32; 256],
+    r_v: [i32; 256],
+    g_u: [i32; 256],
+    g_v: [i32; 256],
+    b_u: [i32; 256],
+}
+
+static LUTS: OnceLock<Luts> = OnceLock::new();
+
+fn get_luts() -> &'static Luts {
+    LUTS.get_or_init(|| {
+        let mut luts = Luts {
+            y: [0; 256],
+            r_v: [0; 256],
+            g_u: [0; 256],
+            g_v: [0; 256],
+            b_u: [0; 256],
+        };
+        for i in 0..256 {
+            let val = (i as i32) - 128;
+            luts.y[i] = ((i as i32) << 8) + 128;
+            luts.r_v[i] = 359 * val;
+            luts.g_u[i] = -88 * val;
+            luts.g_v[i] = -183 * val;
+            luts.b_u[i] = 454 * val;
+        }
+        luts
+    })
+}
+
 // Basic YUYV to RGBA conversion
 fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
     use rayon::prelude::*;
@@ -56,47 +89,73 @@ fn convert_yuyv_to_rgba(raw: &[u8], rgba: &mut [u8]) {
         return;
     }
 
-    // Profile the conversion
     let start_time = Instant::now();
+    let luts = get_luts();
 
-    // Parallelize by row instead of by 4-byte chunk to drastically reduce Rayon scheduling overhead
-    raw.par_chunks_exact(FRAME_WIDTH * RAW_CHANNELS)
-        .zip(rgba.par_chunks_exact_mut(FRAME_WIDTH * RGBA_CHANNELS))
-        .for_each(|(raw_row, rgba_row)| {
-            for (raw_chunk, rgba_chunk) in raw_row.chunks_exact(4).zip(rgba_row.chunks_exact_mut(8)) {
-                let y0 = raw_chunk[0] as i32;
-                let u  = raw_chunk[1] as i32;
-                let y1 = raw_chunk[2] as i32;
-                let v  = raw_chunk[3] as i32;
+    // Rayon Chunking: 16 lines per chunk -> 121 tasks for 1944 lines.
+    // Balances scheduling overhead with CPU starvation prevention.
+    let lines_per_chunk = 16;
+    let raw_chunk_size = FRAME_WIDTH * RAW_CHANNELS * lines_per_chunk;
+    let rgba_chunk_size = FRAME_WIDTH * RGBA_CHANNELS * lines_per_chunk;
 
-                let c = u.wrapping_sub(128);
-                let d = v.wrapping_sub(128);
+    raw.par_chunks_exact(raw_chunk_size)
+        .zip(rgba.par_chunks_exact_mut(rgba_chunk_size))
+        .for_each(|(raw_band, rgba_band)| {
+            for (raw_chunk, rgba_chunk) in raw_band.chunks_exact(4).zip(rgba_band.chunks_exact_mut(8)) {
+                let y0 = raw_chunk[0] as usize;
+                let u  = raw_chunk[1] as usize;
+                let y1 = raw_chunk[2] as usize;
+                let v  = raw_chunk[3] as usize;
 
-                let r_offset = 359i32.wrapping_mul(d);
-                let g_offset = (-88i32).wrapping_mul(c).wrapping_sub(183i32.wrapping_mul(d));
-                let b_offset = 454i32.wrapping_mul(c);
+                let r_v = luts.r_v[v];
+                let g_u = luts.g_u[u];
+                let g_v = luts.g_v[v];
+                let b_u = luts.b_u[u];
 
-                let y0_scaled = (y0 << 8).wrapping_add(128);
-                let r0 = ((y0_scaled.wrapping_add(r_offset)) >> 8).clamp(0, 255) as u8;
-                let g0 = ((y0_scaled.wrapping_add(g_offset)) >> 8).clamp(0, 255) as u8;
-                let b0 = ((y0_scaled.wrapping_add(b_offset)) >> 8).clamp(0, 255) as u8;
+                let g_offset = g_u + g_v;
 
-                let y1_scaled = (y1 << 8).wrapping_add(128);
-                let r1 = ((y1_scaled.wrapping_add(r_offset)) >> 8).clamp(0, 255) as u8;
-                let g1 = ((y1_scaled.wrapping_add(g_offset)) >> 8).clamp(0, 255) as u8;
-                let b1 = ((y1_scaled.wrapping_add(b_offset)) >> 8).clamp(0, 255) as u8;
-
-                rgba_chunk[0] = r0;
-                rgba_chunk[1] = g0;
-                rgba_chunk[2] = b0;
+                let y0_scaled = luts.y[y0];
+                rgba_chunk[0] = ((y0_scaled + r_v) >> 8).clamp(0, 255) as u8;
+                rgba_chunk[1] = ((y0_scaled + g_offset) >> 8).clamp(0, 255) as u8;
+                rgba_chunk[2] = ((y0_scaled + b_u) >> 8).clamp(0, 255) as u8;
                 rgba_chunk[3] = 255;
 
-                rgba_chunk[4] = r1;
-                rgba_chunk[5] = g1;
-                rgba_chunk[6] = b1;
+                let y1_scaled = luts.y[y1];
+                rgba_chunk[4] = ((y1_scaled + r_v) >> 8).clamp(0, 255) as u8;
+                rgba_chunk[5] = ((y1_scaled + g_offset) >> 8).clamp(0, 255) as u8;
+                rgba_chunk[6] = ((y1_scaled + b_u) >> 8).clamp(0, 255) as u8;
                 rgba_chunk[7] = 255;
             }
         });
+
+    // Handle the remaining lines (1944 % 16 = 8 lines)
+    let remainder_raw = raw.chunks_exact(raw_chunk_size).remainder();
+    let remainder_rgba = rgba.chunks_exact_mut(rgba_chunk_size).into_remainder();
+    
+    if !remainder_raw.is_empty() {
+        for (raw_chunk, rgba_chunk) in remainder_raw.chunks_exact(4).zip(remainder_rgba.chunks_exact_mut(8)) {
+            let y0 = raw_chunk[0] as usize;
+            let u  = raw_chunk[1] as usize;
+            let y1 = raw_chunk[2] as usize;
+            let v  = raw_chunk[3] as usize;
+
+            let r_v = luts.r_v[v];
+            let g_offset = luts.g_u[u] + luts.g_v[v];
+            let b_u = luts.b_u[u];
+
+            let y0_scaled = luts.y[y0];
+            rgba_chunk[0] = ((y0_scaled + r_v) >> 8).clamp(0, 255) as u8;
+            rgba_chunk[1] = ((y0_scaled + g_offset) >> 8).clamp(0, 255) as u8;
+            rgba_chunk[2] = ((y0_scaled + b_u) >> 8).clamp(0, 255) as u8;
+            rgba_chunk[3] = 255;
+
+            let y1_scaled = luts.y[y1];
+            rgba_chunk[4] = ((y1_scaled + r_v) >> 8).clamp(0, 255) as u8;
+            rgba_chunk[5] = ((y1_scaled + g_offset) >> 8).clamp(0, 255) as u8;
+            rgba_chunk[6] = ((y1_scaled + b_u) >> 8).clamp(0, 255) as u8;
+            rgba_chunk[7] = 255;
+        }
+    }
 
     let elapsed = start_time.elapsed();
     if elapsed > Duration::from_millis(10) {
@@ -350,3 +409,30 @@ fn main() -> Result<(), slint::PlatformError> {
     println!("Starting Slint UI event loop...");
     app.run()
 }
+
+#[cfg(test)]
+mod throughput_tests {
+    use super::*;
+
+    #[test]
+    fn test_throughput() {
+        let raw = vec![128u8; 2592 * 1944 * 2];
+        let mut rgba = vec![0u8; 2592 * 1944 * 4];
+        let params = dsp::filters::FilterParams::default();
+
+        let frames = 100;
+        let mut min_elapsed = std::time::Duration::from_secs(10);
+        for _ in 0..frames {
+            let frame_start = std::time::Instant::now();
+            convert_yuyv_to_rgba(&raw, &mut rgba);
+            dsp::filters::apply_filters_in_place(&mut rgba, 2592, 1944, &params);
+            let frame_elapsed = frame_start.elapsed();
+            if frame_elapsed < min_elapsed {
+                min_elapsed = frame_elapsed;
+            }
+        }
+        println!("Minimum Frame Processing Time: {:?}", min_elapsed);
+        assert!(min_elapsed < std::time::Duration::from_millis(16), "Frame processing took longer than 16ms");
+    }
+}
+

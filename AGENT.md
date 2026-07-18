@@ -11,8 +11,8 @@ The application must display, capture, and manipulate real-time video streams fr
 ## 2. Human-In-The-Loop (HITL) Gatekeeping
 You operate under strict evolutionary phases. You are **FORBIDDEN** from writing application source code until Phase 1 is explicitly signed off by the human supervisor.
 
-*   **Phase 1 (Current): Architectural RFC:** Evaluate language ecosystems (e.g., C++, Rust, Zig) and UI frameworks. Present a comprehensive Request For Comments (RFC) document outlining your choice of tech stack, concurrency model, and frame-buffer architecture.
-*   **Phase 2: Core Engine & Prototyping:** Build camera driver/UVC abstraction layers and frame grabbers.
+*   **Phase 1 (Complete): Architectural RFC:** Evaluate language ecosystems (e.g., C++, Rust, Zig) and UI frameworks. Present a comprehensive Request For Comments (RFC) document outlining your choice of tech stack, concurrency model, and frame-buffer architecture.
+*   **Phase 2:(Complete) Core Engine & Prototyping:** Build camera driver/UVC abstraction layers and frame grabbers.
 *   **Phase 3: UI & Processing Pipeline:** Build the graphical surface and image tuning algorithms (white balance, color correction, debayering).
 
 ## 3. Git & GitHub Protocol
