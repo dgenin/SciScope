@@ -25,6 +25,7 @@ const NUM_BUFFERS: usize = 8;
 /// A single frame buffer with its capture timestamp.
 struct Frame {
     raw_data: Vec<u8>,
+    valid_len: usize,
     rgba_buffer: slint::SharedPixelBuffer<slint::Rgba8Pixel>,
     capture_time: Instant,
 }
@@ -40,6 +41,7 @@ impl RingBufferPool {
         for _ in 0..size {
             frames.push(Mutex::new(Frame {
                 raw_data: vec![0; width * height * 2],
+                valid_len: 0,
                 rgba_buffer: slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(width as u32, height as u32),
                 capture_time: Instant::now(),
             }));
@@ -174,6 +176,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let mut cam_width = FRAME_WIDTH;
     let mut cam_height = FRAME_HEIGHT;
+    let mut is_mjpeg = false;
 
     if let Some(ref mut dev) = dev {
         if let Ok(mut fmt) = dev.format() {
@@ -185,6 +188,9 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Ok(actual_fmt) = dev.format() {
                 cam_width = actual_fmt.width as usize;
                 cam_height = actual_fmt.height as usize;
+                if actual_fmt.fourcc.str() == Ok("MJPG") {
+                    is_mjpeg = true;
+                }
                 println!("Negotiated Format: {}x{} ({})", cam_width, cam_height, actual_fmt.fourcc);
             }
         }
@@ -243,6 +249,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         if gen_elapsed > Duration::from_millis(10) {
                             println!("[Profiler] Ingest fallback generation took {:?}", gen_elapsed);
                         }
+                        frame.valid_len = cam_width * RAW_CHANNELS * cam_height;
                         frame.capture_time = Instant::now();
                     }
                     let _ = dsp_tx.send(idx);
@@ -287,6 +294,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let mut frame = pool_ingest.frames[idx].lock().unwrap();
                     let len = buf_data.len().min(frame.raw_data.len());
                     frame.raw_data[..len].copy_from_slice(&buf_data[..len]);
+                    frame.valid_len = len;
                     frame.capture_time = Instant::now();
                 }
                 
@@ -318,8 +326,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
                 let mut frame_guard = pool_dsp.frames[idx].lock().unwrap();
                 let frame = &mut *frame_guard;
-                // YUYV to RGBA Conversion without allocating
-                let raw = &frame.raw_data;
+                let raw_valid_len = frame.valid_len;
+                let raw = &frame.raw_data[..raw_valid_len];
                 
                 // Obtain a mutable reference to the SharedPixelBuffer's backing array
                 let rgba_slice = unsafe {
@@ -327,7 +335,16 @@ fn main() -> Result<(), slint::PlatformError> {
                     std::slice::from_raw_parts_mut(pixels.as_mut_ptr() as *mut u8, rgba_frame_size)
                 };
                 
-                convert_yuyv_to_rgba(raw, rgba_slice, cam_width, cam_height);
+                if is_mjpeg {
+                    if let Ok(img) = image::load_from_memory_with_format(raw, image::ImageFormat::Jpeg) {
+                        let rgba_img = img.to_rgba8();
+                        if rgba_img.len() == rgba_slice.len() {
+                            rgba_slice.copy_from_slice(&rgba_img);
+                        }
+                    }
+                } else {
+                    convert_yuyv_to_rgba(raw, rgba_slice, cam_width, cam_height);
+                }
                 
                 let filters_start = Instant::now();
                 // Apply real-time filters
