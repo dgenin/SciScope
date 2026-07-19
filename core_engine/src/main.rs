@@ -18,7 +18,6 @@ const FRAME_HEIGHT: usize = 1944;
 const TARGET_FPS: u32 = 30;
 const RAW_CHANNELS: usize = 2; // YUYV (2 bytes per pixel)
 const RGB_CHANNELS: usize = 3; // RGB
-const RGB_FRAME_SIZE: usize = FRAME_WIDTH * FRAME_HEIGHT * RGB_CHANNELS;
 const NUM_BUFFERS: usize = 8;
 
 /// A single frame buffer with its capture timestamp.
@@ -93,7 +92,9 @@ pub fn convert_yuyv_to_rgb(raw: &[u8], rgb: &mut [u8], width: usize, height: usi
     let start_time = Instant::now();
     let luts = get_luts();
 
-    let lines_per_chunk = 16;
+    // 1944 is evenly divisible by 8 (1944 / 8 = 243).
+    // Using 8 avoids remainder chunks and duplicate processing code.
+    let lines_per_chunk = 8;
     let raw_chunk_size = width * RAW_CHANNELS * lines_per_chunk;
     let rgb_chunk_size = width * RGB_CHANNELS * lines_per_chunk;
 
@@ -124,36 +125,6 @@ pub fn convert_yuyv_to_rgb(raw: &[u8], rgb: &mut [u8], width: usize, height: usi
                 rgb_chunk[5] = ((y1_scaled + b_u) >> 8).clamp(0, 255) as u8;
             }
         });
-
-    // Handle the remaining lines (1944 % 16 = 8 lines)
-    let remainder_raw = raw.chunks_exact(raw_chunk_size).remainder();
-    let remainder_rgb = rgb.chunks_exact_mut(rgb_chunk_size).into_remainder();
-    
-    if !remainder_raw.is_empty() {
-        for (raw_chunk, rgb_chunk) in remainder_raw.chunks_exact(4).zip(remainder_rgb.chunks_exact_mut(6)) {
-            let y0 = raw_chunk[0] as usize;
-            let u  = raw_chunk[1] as usize;
-            let y1 = raw_chunk[2] as usize;
-            let v  = raw_chunk[3] as usize;
-
-            let r_v = luts.r_v[v];
-            let g_u = luts.g_u[u];
-            let g_v = luts.g_v[v];
-            let b_u = luts.b_u[u];
-
-            let g_offset = g_u + g_v;
-
-            let y0_scaled = luts.y[y0];
-            rgb_chunk[0] = ((y0_scaled + r_v) >> 8).clamp(0, 255) as u8;
-            rgb_chunk[1] = ((y0_scaled + g_offset) >> 8).clamp(0, 255) as u8;
-            rgb_chunk[2] = ((y0_scaled + b_u) >> 8).clamp(0, 255) as u8;
-
-            let y1_scaled = luts.y[y1];
-            rgb_chunk[3] = ((y1_scaled + r_v) >> 8).clamp(0, 255) as u8;
-            rgb_chunk[4] = ((y1_scaled + g_offset) >> 8).clamp(0, 255) as u8;
-            rgb_chunk[5] = ((y1_scaled + b_u) >> 8).clamp(0, 255) as u8;
-        }
-    }
 
     let elapsed = start_time.elapsed();
     if elapsed > Duration::from_millis(10) {
@@ -223,7 +194,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let ingest_empty_tx = empty_tx.clone();
     let ingest_dsp_rx = dsp_rx.clone();
     let _ingest_thread = thread::spawn(move || {
-        let mut dev = match dev {
+        let dev = match dev {
             Some(d) => d,
             None => {
                 // Fallback loop

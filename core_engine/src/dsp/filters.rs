@@ -92,7 +92,33 @@ pub fn apply_filters_in_place(rgb: &mut [u8], width: usize, height: usize, param
     }
     
     // Basic Flip operations (Parallelized)
-    if params.flip_vertical {
+    if params.flip_vertical && params.flip_horizontal {
+        let row_bytes = width * 3;
+        let (top, bottom) = rgb.split_at_mut((height / 2) * row_bytes);
+        top.par_chunks_exact_mut(row_bytes)
+           .zip(bottom.par_chunks_exact_mut(row_bytes).rev())
+           .for_each(|(top_row, bottom_row)| {
+               for x in 0..width {
+                   let p1 = x * 3;
+                   let p2 = (width - 1 - x) * 3;
+                   for c in 0..3 {
+                       let tmp = top_row[p1 + c];
+                       top_row[p1 + c] = bottom_row[p2 + c];
+                       bottom_row[p2 + c] = tmp;
+                   }
+               }
+           });
+        if height % 2 != 0 {
+            let mid_row = &mut rgb[(height / 2) * row_bytes .. (height / 2 + 1) * row_bytes];
+            for x in 0..(width / 2) {
+                let p1 = x * 3;
+                let p2 = (width - 1 - x) * 3;
+                for c in 0..3 {
+                    mid_row.swap(p1 + c, p2 + c);
+                }
+            }
+        }
+    } else if params.flip_vertical {
         let row_bytes = width * 3;
         let (top, bottom) = rgb.split_at_mut((height / 2) * row_bytes);
         top.par_chunks_exact_mut(row_bytes)
@@ -100,9 +126,7 @@ pub fn apply_filters_in_place(rgb: &mut [u8], width: usize, height: usize, param
            .for_each(|(top_row, bottom_row)| {
                top_row.swap_with_slice(bottom_row);
            });
-    }
-    
-    if params.flip_horizontal {
+    } else if params.flip_horizontal {
         let row_bytes = width * 3;
         rgb.par_chunks_exact_mut(row_bytes).for_each(|row| {
             for x in 0..(width / 2) {
@@ -198,5 +222,56 @@ mod tests {
         
         println!("Original -> Dark: {}, Mid: {}, Bright: {}, Contrast Ratio: {}", original_dark, original_mid, original_bright, original_contrast);
         println!("HDR -> Dark: {}, Mid: {}, Bright: {}, Contrast Ratio: {}", hdr_dark, hdr_mid, hdr_bright, hdr_contrast);
+    }
+
+    #[test]
+    fn test_white_balance() {
+        let mut rgb = [100, 100, 100];
+        let mut params = FilterParams::default();
+        params.auto_white_balance = true;
+        params.wb_red_gain = 1.5;
+        params.wb_blue_gain = 0.5;
+
+        apply_filters_in_place(&mut rgb, 1, 1, &params);
+        assert_eq!(rgb, [150, 100, 50]);
+    }
+
+    #[test]
+    fn test_flip_vertical() {
+        let mut rgb = [
+            10, 20, 30, // Row 0
+            40, 50, 60, // Row 1
+        ];
+        let mut params = FilterParams::default();
+        params.flip_vertical = true;
+
+        apply_filters_in_place(&mut rgb, 1, 2, &params);
+        assert_eq!(
+            rgb,
+            [
+                40, 50, 60, // Row 1 now at top
+                10, 20, 30, // Row 0 now at bottom
+            ]
+        );
+    }
+
+    #[test]
+    fn test_flip_both() {
+        let mut rgb = [
+            1, 2, 3,   4, 5, 6, // Row 0
+            7, 8, 9,  10,11,12, // Row 1
+        ];
+        let mut params = FilterParams::default();
+        params.flip_vertical = true;
+        params.flip_horizontal = true;
+
+        apply_filters_in_place(&mut rgb, 2, 2, &params);
+        assert_eq!(
+            rgb,
+            [
+                10, 11, 12,   7,  8,  9, // Row 1 reversed
+                 4,  5,  6,   1,  2,  3, // Row 0 reversed
+            ]
+        );
     }
 }
