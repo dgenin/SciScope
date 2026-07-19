@@ -961,6 +961,8 @@ dependencies = [
  "slint-build",
  "tokio",
  "v4l",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
