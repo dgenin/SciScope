@@ -21,8 +21,6 @@ jobs:
     
     - name: Build
       run: cargo build --release --verbose
-      working-directory: core_engine
 
     - name: Run tests
       run: cargo test --release --verbose
-      working-directory: core_engine

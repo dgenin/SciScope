@@ -1,0 +1,9 @@
+[package]
+name = "sciscope_core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rayon = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+slint = "1.6"

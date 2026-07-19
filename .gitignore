@@ -3,4 +3,4 @@
 .gemini/
 .local/
 .cache/
-core_engine/target/
+target/
