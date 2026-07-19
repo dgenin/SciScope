@@ -8,6 +8,7 @@ pub struct FilterParams {
     pub flip_horizontal: bool,
     pub flip_vertical: bool,
     pub hdr_enabled: bool,
+    pub clahe_enabled: bool,
     pub noise_reduction_enabled: bool,
 }
 
@@ -21,6 +22,7 @@ impl Default for FilterParams {
             flip_horizontal: false,
             flip_vertical: false,
             hdr_enabled: false,
+            clahe_enabled: false,
             noise_reduction_enabled: false,
         }
     }
@@ -87,6 +89,111 @@ pub fn apply_filters_in_place(rgb: &mut [u8], width: usize, height: usize, param
                 pixel[0] = r.clamp(0.0, 255.0) as u8;
                 pixel[1] = g.clamp(0.0, 255.0) as u8;
                 pixel[2] = b.clamp(0.0, 255.0) as u8;
+            }
+        });
+    }
+
+    if params.clahe_enabled {
+        let tiles_x = 8;
+        let tiles_y = 8;
+        let tile_w = width / tiles_x;
+        let tile_h = height / tiles_y;
+        let avg = (tile_w * tile_h) / 256;
+        let clip_limit = avg * 4;
+
+        let mut cdfs = vec![[0u8; 256]; tiles_x * tiles_y];
+        
+        cdfs.par_chunks_exact_mut(tiles_x).enumerate().for_each(|(ty, row_cdfs)| {
+            for tx in 0..tiles_x {
+                let mut hist = [0usize; 256];
+                let start_y = ty * tile_h;
+                let start_x = tx * tile_w;
+                
+                for y in start_y..(start_y + tile_h) {
+                    let row_idx = y * width * 3;
+                    for x in start_x..(start_x + tile_w) {
+                        let idx = row_idx + x * 3;
+                        let r = rgb[idx] as u32;
+                        let g = rgb[idx + 1] as u32;
+                        let b = rgb[idx + 2] as u32;
+                        let lum = ((r * 77 + g * 150 + b * 29) >> 8) as usize;
+                        hist[lum] += 1;
+                    }
+                }
+                
+                let mut excess = 0;
+                for i in 0..256 {
+                    if hist[i] > clip_limit {
+                        excess += hist[i] - clip_limit;
+                        hist[i] = clip_limit;
+                    }
+                }
+                
+                let bin_inc = excess / 256;
+                let upper = excess % 256;
+                for i in 0..256 {
+                    hist[i] += bin_inc;
+                    if i < upper {
+                        hist[i] += 1;
+                    }
+                }
+                
+                let mut cdf = [0usize; 256];
+                let mut sum = 0;
+                for i in 0..256 {
+                    sum += hist[i];
+                    cdf[i] = sum;
+                }
+                
+                let total = sum as f32;
+                for i in 0..256 {
+                    row_cdfs[tx][i] = ((cdf[i] as f32 / total) * 255.0).clamp(0.0, 255.0) as u8;
+                }
+            }
+        });
+
+        let row_bytes = width * 3;
+        rgb.par_chunks_exact_mut(row_bytes).enumerate().for_each(|(y, row)| {
+            let ty_f = (y as f32 / tile_h as f32) - 0.5;
+            let ty1 = ty_f.floor() as isize;
+            let ty2 = ty1 + 1;
+            let y_coef = ty_f - ty_f.floor();
+            
+            let ty1_clamped = ty1.clamp(0, (tiles_y - 1) as isize) as usize;
+            let ty2_clamped = ty2.clamp(0, (tiles_y - 1) as isize) as usize;
+
+            let row_offset_1 = ty1_clamped * tiles_x;
+            let row_offset_2 = ty2_clamped * tiles_x;
+
+            for x in 0..width {
+                let tx_f = (x as f32 / tile_w as f32) - 0.5;
+                let tx1 = tx_f.floor() as isize;
+                let tx2 = tx1 + 1;
+                let x_coef = tx_f - tx_f.floor();
+                
+                let tx1_clamped = tx1.clamp(0, (tiles_x - 1) as isize) as usize;
+                let tx2_clamped = tx2.clamp(0, (tiles_x - 1) as isize) as usize;
+
+                let idx = x * 3;
+                let r = row[idx] as u32;
+                let g = row[idx + 1] as u32;
+                let b = row[idx + 2] as u32;
+                let lum = ((r * 77 + g * 150 + b * 29) >> 8) as usize;
+
+                let cdf11 = cdfs[row_offset_1 + tx1_clamped][lum] as f32;
+                let cdf12 = cdfs[row_offset_1 + tx2_clamped][lum] as f32;
+                let cdf21 = cdfs[row_offset_2 + tx1_clamped][lum] as f32;
+                let cdf22 = cdfs[row_offset_2 + tx2_clamped][lum] as f32;
+
+                let interp_y1 = cdf11 * (1.0 - x_coef) + cdf12 * x_coef;
+                let interp_y2 = cdf21 * (1.0 - x_coef) + cdf22 * x_coef;
+                let new_lum = interp_y1 * (1.0 - y_coef) + interp_y2 * y_coef;
+                
+                let scale = if lum == 0 { 0.0 } else { new_lum / lum as f32 };
+                
+                row[idx] = ((r as f32 * scale).clamp(0.0, 255.0)) as u8;
+                row[idx + 1] = ((g as f32 * scale).clamp(0.0, 255.0)) as u8;
+                row[idx + 2] = ((b as f32 * scale).clamp(0.0, 255.0)) as u8;
             }
         });
     }

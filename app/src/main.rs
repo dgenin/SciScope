@@ -209,6 +209,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         flip_horizontal: p.flip_horizontal,
                         flip_vertical: p.flip_vertical,
                         hdr_enabled: p.hdr_enabled,
+                        clahe_enabled: p.clahe_enabled,
                         noise_reduction_enabled: p.noise_reduction_enabled,
                     }
                 };
@@ -315,6 +316,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let mut params = ui_filter_params.lock().unwrap();
             params.auto_white_balance = app.get_awb_enabled();
             params.hdr_enabled = app.get_hdr_enabled();
+            params.clahe_enabled = app.get_clahe_enabled();
             params.flip_horizontal = app.get_flip_h_enabled();
             params.flip_vertical = app.get_flip_v_enabled();
             params.exposure_gain = app.get_exposure_val();

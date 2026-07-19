@@ -11,6 +11,7 @@ export component AppWindow inherits Window {
     // Control properties
     in-out property <bool> awb-enabled: false;
     in-out property <bool> hdr-enabled: false;
+    in-out property <bool> clahe-enabled: false;
     in-out property <bool> grid-enabled: false;
     in-out property <bool> flip-h-enabled: false;
     in-out property <bool> flip-v-enabled: false;
@@ -40,6 +41,11 @@ export component AppWindow inherits Window {
                         text: "Live HDR (Local Contrast)";
                         checked: hdr-enabled;
                         toggled => { hdr-enabled = self.checked; }
+                    }
+                    CheckBox {
+                        text: "CLAHE (Advanced Contrast)";
+                        checked: clahe-enabled;
+                        toggled => { clahe-enabled = self.checked; }
                     }
                     HorizontalBox {
                         Text { text: "Exposure: " + Math.round(exposure-val * 10.0) / 10.0; color: white; }
